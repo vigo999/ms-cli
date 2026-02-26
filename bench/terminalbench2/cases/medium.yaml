@@ -1,0 +1,4 @@
+name: medium
+cases:
+  - id: m1
+    task: diagnose and patch a simple failure

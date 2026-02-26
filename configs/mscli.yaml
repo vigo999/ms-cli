@@ -1,0 +1,18 @@
+model:
+  provider: openai
+  endpoint: https://api.openai.com/v1
+budget:
+  max_tokens: 32768
+  max_cost_usd: 10
+ui:
+  enabled: true
+permissions:
+  skip_requests: false
+  allowed_tools: []
+context:
+  max_tokens: 24000
+  compaction_threshold: 0.85
+memory:
+  max_items: 200
+  max_bytes: 2097152
+  ttl_hours: 168

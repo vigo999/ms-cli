@@ -1,0 +1,6 @@
+skills:
+  repo: https://github.com/vigo/mindspore-skills.git
+  revision: main
+  cache_dir: .cache/skills
+  workflows:
+    - add-algo-feature

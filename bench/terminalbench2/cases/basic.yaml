@@ -1,0 +1,4 @@
+name: basic
+cases:
+  - id: b1
+    task: run hello world command
