@@ -5,7 +5,7 @@ mindspore CLI (AI infra agent)
 ## Repository Structure
 
 ```text
-mscli/
+ms-cli/
 ├── go.mod                               # Go module definition
 ├── README.md                            # Project overview and structure guide
 ├── mscli-demo.mp4                       # Demo recording
@@ -36,14 +36,8 @@ mscli/
 │       ├── retrieve.go                  # Retrieval result definitions
 │       └── policy.go                    # Retention/size policies
 │
-├── executor/                            # Hands: command execution backends
-│   ├── local/
-│   │   └── runner.go                    # Local command execution adapter
-│   ├── docker/
-│   │   └── runner.go                    # Docker execution adapter
-│   └── common/
-│       ├── types.go                     # Shared execution request/result types
-│       └── stream.go                    # Stream chunk/output types
+├── executor/                            # Hands: command execution (local-only)
+│   └── runner.go                        # Local command execution adapter
 │
 ├── tools/                               # Capabilities exposed to the agent
 │   ├── shell/
@@ -102,4 +96,3 @@ mscli/
 
 ## Rule: 
 UI listens to events; agent loop emits events; executor/tools do not depend on UI.
-
