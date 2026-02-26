@@ -1,15 +1,14 @@
-<<<<<<< HEAD
-# mscode-cli
+## ms-cli
 
-mindspore agent CLI (build for AI infra)
+mindspore CLI (AI infra agent)
 
 ## Repository Structure
 
 ```text
-mscode/
+mscli/
 ├── go.mod                               # Go module definition
 ├── README.md                            # Project overview and structure guide
-├── mscodecli-demo.mp4                   # Demo recording
+├── mscli-demo.mp4                       # Demo recording
 │
 ├── app/                                 # Bootstrap/wiring/lifecycle entry layer
 │   ├── main.go                          # Process entrypoint
@@ -18,7 +17,7 @@ mscode/
 │   └── run.go                           # Start and shutdown flow
 │
 ├── configs/                             # Runtime configuration files
-│   ├── mscodecli.yaml                   # Model, budget, UI, permission, memory knobs
+│   ├── mscli.yaml                       # Model, budget, UI, permission, memory knobs
 │   ├── executor.yaml                    # Execution backend and limits
 │   └── skills.yaml                      # Skills repository and workflow config
 │
@@ -101,7 +100,6 @@ mscode/
 - `app/`: wires everything together.
 
 
-Rule: UI listens to events; agent loop emits events; executor/tools do not depend on UI.
-=======
-# mscli
->>>>>>> 1ced41a9136fbbad4458e89e96a865d8328e5539
+## Rule: 
+UI listens to events; agent loop emits events; executor/tools do not depend on UI.
+
