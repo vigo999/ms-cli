@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
-	"mscli/ui/components"
-	"mscli/ui/model"
-	"mscli/ui/panels"
+	"github.com/vigo999/ms-cli/ui/components"
+	"github.com/vigo999/ms-cli/ui/model"
+	"github.com/vigo999/ms-cli/ui/panels"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -28,15 +30,18 @@ type App struct {
 	width    int
 	height   int
 	eventCh  <-chan model.Event
+	userCh   chan<- string // sends user input to the engine bridge
 }
 
 // New creates a new App driven by the given event channel.
-func New(ch <-chan model.Event, workDir, repoURL string) App {
+// userCh may be nil (demo mode) — user input won't be forwarded.
+func New(ch <-chan model.Event, userCh chan<- string, version, workDir, repoURL string) App {
 	return App{
-		state:   model.NewState(workDir, repoURL),
+		state:   model.NewState(version, workDir, repoURL),
 		input:   components.NewTextInput(),
 		spinner: components.NewSpinner(),
 		eventCh: ch,
+		userCh:  userCh,
 	}
 }
 
@@ -109,7 +114,19 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.state = a.state.WithMessage(model.Message{Kind: model.MsgUser, Content: val})
 		a.input = a.input.Reset()
 		a.updateViewport()
+		if a.userCh != nil {
+			select {
+			case a.userCh <- val:
+			default:
+				// drop if buffer full — avoids freezing the UI
+			}
+		}
 		return a, nil
+
+	case "pgup", "pgdown", "up", "down", "home", "end":
+		var cmd tea.Cmd
+		a.viewport, cmd = a.viewport.Update(msg)
+		return a, cmd
 
 	default:
 		var cmd tea.Cmd
@@ -220,6 +237,7 @@ func (a App) replaceThinking(m model.Message) model.State {
 	}
 	msgs = append(msgs, m)
 	return model.State{
+		Version:  a.state.Version,
 		Model:    a.state.Model,
 		Messages: msgs,
 		WorkDir:  a.state.WorkDir,
@@ -244,6 +262,7 @@ func (a App) appendToLastTool(line string) model.State {
 	}
 
 	return model.State{
+		Version:  a.state.Version,
 		Model:    a.state.Model,
 		Messages: msgs,
 		WorkDir:  a.state.WorkDir,
@@ -257,11 +276,7 @@ func (a *App) updateViewport() {
 }
 
 func (a App) chatLine() string {
-	s := ""
-	for i := 0; i < a.width; i++ {
-		s += "─"
-	}
-	return chatLineStyle.Render(s)
+	return chatLineStyle.Render(strings.Repeat("─", a.width))
 }
 
 func (a App) View() string {

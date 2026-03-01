@@ -1,18 +1,86 @@
 package main
 
 import (
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"mscli/ui"
-	"mscli/ui/model"
+	"github.com/vigo999/ms-cli/agent/loop"
+	"github.com/vigo999/ms-cli/ui"
+	"github.com/vigo999/ms-cli/ui/model"
 )
 
-// Run starts the TUI. In preview mode it feeds fake events.
+// Run starts the TUI. In demo mode it feeds fake events; in real mode it
+// bridges user input to the engine.
 func (a *Application) Run() error {
+	if a.Demo {
+		return a.runDemo()
+	}
+	return a.runReal()
+}
+
+// runReal starts the TUI and a goroutine that reads user input from the
+// channel, dispatches to the engine, and sends resulting events back.
+func (a *Application) runReal() error {
+	userCh := make(chan string, 8)
+	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL)
+	p := tea.NewProgram(tui, tea.WithAltScreen(), tea.WithMouseCellMotion())
+
+	go a.inputLoop(userCh)
+
+	_, err := p.Run()
+	close(userCh)
+	return err
+}
+
+// inputLoop reads user input submitted via the TUI and routes it to the
+// engine or slash-command handler.
+func (a *Application) inputLoop(userCh <-chan string) {
+	for input := range userCh {
+		a.processInput(input)
+	}
+}
+
+// processInput handles a single user input string: either a slash command
+// or a free-form task sent to the engine.
+func (a *Application) processInput(input string) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return
+	}
+
+	// Slash commands
+	if strings.HasPrefix(trimmed, "/") {
+		a.handleCommand(trimmed)
+		return
+	}
+
+	// Free-form: send to engine
+	a.EventCh <- model.Event{Type: model.AgentThinking}
+
+	events, err := a.Engine.Run(loop.Task{Description: trimmed})
+	if err != nil {
+		a.EventCh <- model.Event{
+			Type:     model.ToolError,
+			ToolName: "Engine",
+			Message:  err.Error(),
+		}
+		return
+	}
+
+	for _, ev := range events {
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: ev.Message,
+		}
+	}
+}
+
+// runDemo starts the TUI with fake events for preview/testing.
+func (a *Application) runDemo() error {
 	go a.fakeAgentLoop()
 
-	tui := ui.New(a.EventCh, "/Users/weizheng/work/ms-cli", "github.com/vigo999/ms-cli")
+	tui := ui.New(a.EventCh, nil, Version, a.WorkDir, a.RepoURL)
 	p := tea.NewProgram(tui, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
@@ -189,7 +257,7 @@ func (a *Application) fakeAgentLoop() {
 	sleep(300)
 	send(model.Event{Type: model.CmdOutput, Message: "PASS"})
 	sleep(200)
-	send(model.Event{Type: model.CmdOutput, Message: "ok  	mscli/model	2.345s"})
+	send(model.Event{Type: model.CmdOutput, Message: "ok  \tmscli/model\t2.345s"})
 	sleep(300)
 	send(model.Event{Type: model.CmdFinished})
 	sleep(500)

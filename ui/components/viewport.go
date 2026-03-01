@@ -13,6 +13,11 @@ type Viewport struct {
 	lines []string
 }
 
+// AtBottom reports whether the viewport is scrolled to the bottom.
+func (v Viewport) AtBottom() bool {
+	return v.Model.AtBottom()
+}
+
 // NewViewport creates a viewport with the given dimensions.
 func NewViewport(width, height int) Viewport {
 	vp := viewport.New(width, height)
@@ -27,22 +32,28 @@ func (v Viewport) SetSize(width, height int) Viewport {
 	return v
 }
 
-// Append adds a line and scrolls to the bottom.
+// Append adds a line. Only auto-scrolls if already at bottom.
 func (v Viewport) Append(line string) Viewport {
+	follow := v.AtBottom()
 	newLines := make([]string, len(v.lines), len(v.lines)+1)
 	copy(newLines, v.lines)
 	newLines = append(newLines, line)
 	v.lines = newLines
 	v.Model.SetContent(strings.Join(v.lines, "\n"))
-	v.Model.GotoBottom()
+	if follow {
+		v.Model.GotoBottom()
+	}
 	return v
 }
 
-// SetContent replaces all content.
+// SetContent replaces all content. If followBottom is true, scrolls to bottom.
 func (v Viewport) SetContent(content string) Viewport {
+	follow := v.AtBottom()
 	v.lines = strings.Split(content, "\n")
 	v.Model.SetContent(content)
-	v.Model.GotoBottom()
+	if follow {
+		v.Model.GotoBottom()
+	}
 	return v
 }
 

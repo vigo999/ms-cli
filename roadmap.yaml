@@ -1,0 +1,14 @@
+version: 1
+target_date: "2026-06-30"
+phases:
+  - id: "phase1"
+    name: "Foundation"
+    start: "2026-03-01"
+    end: "2026-03-31"
+    milestones:
+      - id: "p1-e2e"
+        title: "E2E: CLI -> Agent -> Skill -> Result"
+        status: "in_progress"
+      - id: "p1-3skills"
+        title: "3 core skills callable"
+        status: "done"

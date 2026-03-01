@@ -1,0 +1,11 @@
+# Binaries
+ms-cli
+*.exe
+*.out
+
+# Go build/test artifacts
+*.test
+*.prof
+
+# Go workspace and cache files
+*.coverprofile

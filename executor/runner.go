@@ -1,8 +1,7 @@
-package local
+package executor
 
-import "context"
+import "github.com/vigo999/ms-cli/agent/loop"
 
-// Runner executes commands and streams output.
-type Runner interface {
-	Run(ctx context.Context, cmd string) error
+func Run(task loop.Task) string {
+	return "Executed: " + task.Description
 }

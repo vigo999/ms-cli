@@ -77,6 +77,7 @@ type Event struct {
 
 // State is the central UI state.
 type State struct {
+	Version          string
 	Tasks            []TaskInfo
 	ActiveTask       int
 	Model            ModelInfo
@@ -87,9 +88,10 @@ type State struct {
 }
 
 // NewState returns an initial empty state.
-func NewState(workDir, repoURL string) State {
+func NewState(version, workDir, repoURL string) State {
 	return State{
-		Tasks: []TaskInfo{},
+		Version: version,
+		Tasks:   []TaskInfo{},
 		Model: ModelInfo{
 			Name:   "deepseek-r1",
 			CtxMax: 128000,
@@ -102,6 +104,7 @@ func NewState(workDir, repoURL string) State {
 // WithTask returns a new State with the given task added.
 func (s State) WithTask(t TaskInfo) State {
 	return State{
+		Version:          s.Version,
 		Tasks:            append(append([]TaskInfo{}, s.Tasks...), t),
 		ActiveTask:       s.ActiveTask,
 		Model:            s.Model,
@@ -115,6 +118,7 @@ func (s State) WithTask(t TaskInfo) State {
 // WithMessage returns a new State with the given message appended.
 func (s State) WithMessage(m Message) State {
 	return State{
+		Version:          s.Version,
 		Tasks:            s.Tasks,
 		ActiveTask:       s.ActiveTask,
 		Model:            s.Model,
@@ -128,6 +132,7 @@ func (s State) WithMessage(m Message) State {
 // WithModel returns a new State with updated model info.
 func (s State) WithModel(m ModelInfo) State {
 	return State{
+		Version:          s.Version,
 		Tasks:            s.Tasks,
 		ActiveTask:       s.ActiveTask,
 		Model:            m,

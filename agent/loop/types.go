@@ -1,7 +1,11 @@
 package loop
 
-// Event is emitted by runtime loop.
+type Task struct {
+	ID          string
+	Description string
+}
+
 type Event struct {
 	Type    string
-	Payload any
+	Message string
 }

@@ -29,10 +29,8 @@ type hint struct {
 
 var hints = []hint{
 	{"/", "commands"},
-	{"ctrl+l", "model"},
-	{"ctrl+j", "newline"},
+	{"pgup/pgdn", "scroll"},
 	{"ctrl+c", "quit"},
-	{"ctrl+g", "more"},
 }
 
 // RenderHintBar renders the bottom keybinding hint bar.

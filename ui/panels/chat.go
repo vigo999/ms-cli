@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"mscli/ui/model"
+	"github.com/vigo999/ms-cli/ui/model"
 )
 
 var (

@@ -2,10 +2,11 @@ package panels
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"mscli/ui/model"
+	"github.com/vigo999/ms-cli/ui/model"
 )
 
 var (
@@ -42,7 +43,7 @@ func RenderTopBar(s model.State, width int) string {
 	sep := sepStyle.Render("│")
 
 	// Line 1: brand + model info (always shown)
-	left := brandStyle.Render("ms-cli v0.1.0")
+	left := brandStyle.Render(s.Version)
 	right := strings.Join([]string{
 		infoStyle.Render("model:"),
 		infoStyle.Render(s.Model.Name),
@@ -76,12 +77,12 @@ func RenderTopBar(s model.State, width int) string {
 }
 
 func shortenPath(p string) string {
-	home := "/Users/"
-	if idx := strings.Index(p, home); idx >= 0 {
-		rest := p[idx+len(home):]
-		if slashIdx := strings.Index(rest, "/"); slashIdx >= 0 {
-			return "~" + rest[slashIdx:]
-		}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if strings.HasPrefix(p, home) {
+		return "~" + p[len(home):]
 	}
 	return p
 }
@@ -98,9 +99,5 @@ func formatTokens(n int) string {
 }
 
 func repeatChar(ch string, n int) string {
-	s := ""
-	for i := 0; i < n; i++ {
-		s += ch
-	}
-	return s
+	return strings.Repeat(ch, n)
 }

@@ -1,9 +1,14 @@
 package main
 
-import "log"
+import (
+	"log"
+	"os"
+)
 
 func main() {
-	app, err := Bootstrap()
+	demo := len(os.Args) > 1 && os.Args[1] == "--demo"
+
+	app, err := Bootstrap(demo)
 	if err != nil {
 		log.Fatal(err)
 	}

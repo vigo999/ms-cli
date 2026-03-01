@@ -1,98 +1,122 @@
-## ms-cli
+# ms-cli
 
-mindspore CLI (AI infra agent)
+MindSpore CLI — an AI infrastructure agent with a terminal UI.
+
+## Prerequisites
+
+- Go 1.24.2+ (see `go.mod`)
+
+## Quick Start
+
+Build:
+
+```bash
+go build -o ms-cli ./app
+```
+
+Run demo mode:
+
+```bash
+go run ./app --demo
+# or
+./ms-cli --demo
+```
+
+Run real mode:
+
+```bash
+go run ./app
+# or
+./ms-cli
+```
+
+## Commands
+
+In TUI input, use slash commands:
+
+- `/roadmap status [path]` (default: `roadmap.yaml`)
+- `/weekly status [path]` (default: `weekly.md`)
+
+Any non-slash input is treated as a normal task prompt and routed to the engine.
+
+## Keybindings
+
+| Key | Action |
+|-----|--------|
+| `enter` | Send input |
+| `pgup` / `pgdn` | Scroll chat |
+| `up` / `down` | Scroll chat |
+| `home` / `end` | Jump to top / bottom |
+| `/` | Start a slash command |
+| `ctrl+c` | Quit |
+
+## Project Status Data
+
+Roadmap status engine:
+
+- `internal/project/roadmap.go`
+- Parses roadmap YAML, validates schema, and computes phase + overall progress.
+
+Weekly update parser (Markdown + YAML front matter):
+
+- `internal/project/weekly.go`
+- Template: `docs/updates/WEEKLY_TEMPLATE.md`
+
+Public roadmap page:
+
+- `docs/roadmap/ROADMAP.md`
+
+Project reports:
+
+- `docs/updates/` (see latest `*-report.md`)
 
 ## Repository Structure
 
 ```text
 ms-cli/
-├── go.mod                               # Go module definition
-├── README.md                            # Project overview and structure guide
-├── mscli-demo.mp4                       # Demo recording
-│
-├── app/                                 # Bootstrap/wiring/lifecycle entry layer
-│   ├── main.go                          # Process entrypoint
-│   ├── bootstrap.go                     # Build top-level dependencies
-│   ├── wire.go                          # Bind interfaces to implementations
-│   └── run.go                           # Start and shutdown flow
-│
-├── configs/                             # Runtime configuration files
-│   ├── mscli.yaml                       # Model, budget, UI, permission, memory knobs
-│   ├── executor.yaml                    # Execution backend and limits
-│   └── skills.yaml                      # Skills repository and workflow config
-│
-├── agent/                               # Brain: agent control and reasoning state
-│   ├── loop/                            # Core task loop and event contracts
-│   │   ├── engine.go                    # Main loop driver (task -> events)
-│   │   ├── types.go                     # Shared task/result/event types
-│   │   ├── ports.go                     # Interfaces to executor/tools/integrations
-│   │   └── permission.go                # Permission gate contract
-│   ├── context/                         # Context assembly and budgeting
-│   │   ├── manager.go                   # Context pipeline entry
-│   │   ├── budget.go                    # Token/context budget model
-│   │   └── compact.go                   # Context compaction behavior
-│   └── memory/                          # Memory retrieval and retention policy
-│       ├── store.go                     # Memory storage interface
-│       ├── retrieve.go                  # Retrieval result definitions
-│       └── policy.go                    # Retention/size policies
-│
-├── executor/                            # Hands: command execution (local-only)
-│   └── runner.go                        # Local command execution adapter
-│
-├── tools/                               # Capabilities exposed to the agent
-│   ├── shell/
-│   │   └── shell.go                     # Shell tool wrapper
-│   └── fs/
-│       └── fs.go                        # File read/write/patch tool wrapper
-│
-├── ui/                                  # Face: terminal UI
-│   ├── app.go                           # Main TUI app model
-│   ├── state.go                         # Central UI state
-│   ├── events.go                        # UI event types
-│   ├── panels/
-│   │   ├── task.go                      # Task and current-step panel
-│   │   ├── exec.go                      # Live execution output panel
-│   │   └── analysis.go                  # Analysis and next-action panel
-│   └── components/
-│       ├── spinner.go                   # Spinner widget
-│       └── viewport.go                  # Scrollable output widget
-│
-├── integrations/                        # External service adapters
-│   ├── domain/
-│   │   ├── client.go                    # Domain /analyze client contract
-│   │   └── schema.go                    # Diagnosis schemas
-│   └── skills/
-│       ├── repo.go                      # Skills repo sync contract
-│       └── invoke.go                    # Skills workflow invoke contract
-│
+├── app/                        # entry point + wiring
+│   ├── main.go
+│   ├── bootstrap.go
+│   ├── wire.go
+│   ├── run.go
+│   └── commands.go
+├── agent/
+│   ├── loop/                   # engine, task/event types, permissions
+│   ├── context/                # budget, compaction, context manager
+│   └── memory/                 # policy, store, retrieve
+├── executor/
+│   └── runner.go               # pluggable task executor
+├── integrations/
+│   ├── domain/                 # external domain client + schema
+│   └── skills/                 # skill invocation + repo
+├── internal/
+│   └── project/
+│       ├── roadmap.go
+│       └── weekly.go
+├── tools/
+│   ├── fs/                     # filesystem operations
+│   └── shell/                  # shell command runner
 ├── trace/
-│   └── writer.go                        # Structured runtime trace writer
-│
+│   └── writer.go               # execution trace logging
 ├── report/
-│   └── summary.go                       # Markdown report model/generator
-│
-└── bench/
-    └── terminalbench2/                  # Benchmark assets and scripts
-        ├── README.md
-        ├── cases/
-        │   ├── basic.yaml
-        │   └── medium.yaml
-        ├── runner/
-        │   ├── run.sh
-        │   └── parse.sh
-        └── results/
-            └── .gitkeep
+│   └── summary.go              # report generation
+├── ui/
+│   ├── app.go                  # root Bubble Tea model
+│   ├── model/model.go          # shared state types
+│   ├── components/             # spinner, textinput, viewport
+│   └── panels/                 # topbar, chat, hintbar
+├── docs/
+│   ├── roadmap/ROADMAP.md
+│   └── updates/
+├── go.mod
+└── README.md
 ```
 
-## Architecture Model
+## Known Limitations
 
-- `agent/`: decides what to do.
-- `executor/`: runs commands/jobs.
-- `tools/`: capability wrappers for agent calls.
-- `ui/`: renders state and events.
-- `integrations/`: external domain/skills adapters.
-- `app/`: wires everything together.
+- The real-mode engine flow is still minimal/stub-oriented.
+- Running Bubble Tea in non-interactive shells may fail with `/dev/tty` errors.
 
+## Architecture Rule
 
-## Rule: 
 UI listens to events; agent loop emits events; executor/tools do not depend on UI.
