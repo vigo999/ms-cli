@@ -61,6 +61,7 @@ In TUI input, use slash commands:
 ### Session Commands
 - `/compact` - Compact conversation context to save tokens
 - `/clear` - Clear chat history
+- `/mouse [on|off|toggle|status]` - Control mouse wheel scrolling
 - `/exit` - Exit the application
 - `/help` - Show available commands
 
@@ -75,6 +76,7 @@ Type `/` to see available slash commands. Use `↑`/`↓` keys to navigate and `
 | Key | Action |
 |-----|--------|
 | `enter` | Send input |
+| `mouse wheel` | Scroll chat |
 | `pgup` / `pgdn` | Scroll chat |
 | `up` / `down` | Scroll chat / Navigate slash suggestions |
 | `home` / `end` | Jump to top / bottom |

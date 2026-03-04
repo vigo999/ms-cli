@@ -40,6 +40,8 @@ func (a *Application) handleCommand(input string) {
 		a.cmdPermission(parts[1:])
 	case "/yolo":
 		a.cmdYolo()
+	case "/mouse":
+		a.cmdMouse(parts[1:])
 	case "/help":
 		a.cmdHelp()
 	default:
@@ -192,9 +194,9 @@ func (a *Application) showCurrentModel() {
 	}
 
 	apiKeyStatus := "not set"
-	if a.Config.Model.APIKey != "" || 
-	   (provider == "openai" && getEnv("OPENAI_API_KEY") != "") ||
-	   (provider == "openrouter" && getEnv("OPENROUTER_API_KEY") != "") {
+	if a.Config.Model.APIKey != "" ||
+		(provider == "openai" && getEnv("OPENAI_API_KEY") != "") ||
+		(provider == "openrouter" && getEnv("OPENROUTER_API_KEY") != "") {
 		apiKeyStatus = "set"
 	}
 
@@ -475,6 +477,36 @@ func (a *Application) cmdYolo() {
 	}
 }
 
+// cmdMouse handles "/mouse [on|off|toggle|status]".
+func (a *Application) cmdMouse(args []string) {
+	mode := "toggle"
+	if len(args) > 0 {
+		mode = strings.ToLower(strings.TrimSpace(args[0]))
+	}
+
+	switch mode {
+	case "on", "enable", "enabled":
+		a.EventCh <- model.Event{Type: model.MouseModeToggle, Message: "on"}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Mouse scrolling enabled. Use wheel to scroll chat."}
+	case "off", "disable", "disabled":
+		a.EventCh <- model.Event{Type: model.MouseModeToggle, Message: "off"}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Mouse scrolling disabled."}
+	case "toggle":
+		a.EventCh <- model.Event{Type: model.MouseModeToggle, Message: "toggle"}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Mouse scrolling toggled."}
+	case "status":
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: "Use `/mouse on` to enable scroll wheel, `/mouse off` to disable, `/mouse toggle` to switch.",
+		}
+	default:
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: "Usage: /mouse [on|off|toggle|status]",
+		}
+	}
+}
+
 // cmdHelp handles "/help".
 func (a *Application) cmdHelp() {
 	helpText := `Available commands:
@@ -486,6 +518,7 @@ func (a *Application) cmdHelp() {
   /test                   Test API connectivity
   /permission [tool] [level]  Manage tool permissions
   /yolo                   Toggle auto-approve mode
+  /mouse [on|off|toggle|status] Toggle mouse wheel scrolling
   /exit                   Exit the application
   /compact                Compact conversation context to save tokens
   /clear                  Clear chat history
@@ -513,6 +546,7 @@ Permission Levels:
 Keybindings:
   enter      Send input
   ↑/↓        Navigate slash suggestions
+  mouse wheel Scroll chat
   pgup/pgdn  Scroll chat
   home/end   Jump to top/bottom
   /          Start a slash command
