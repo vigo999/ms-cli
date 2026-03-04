@@ -39,25 +39,26 @@ func LoadFromFile(path string) (*Config, error) {
 
 // LoadWithEnv loads configuration from file and applies environment variable overrides.
 func LoadWithEnv(path string) (*Config, error) {
-	var cfg *Config
-	var err error
-
-	if path != "" {
-		cfg, err = LoadFromFile(path)
-		if err != nil {
-			// If file doesn't exist, use defaults
-			if os.IsNotExist(err) {
-				cfg = DefaultConfig()
-			} else {
-				return nil, err
-			}
-		}
-	} else {
-		cfg = DefaultConfig()
+	// Auto-discover config file when no explicit path is provided.
+	if strings.TrimSpace(path) == "" {
+		path = FindConfigFile()
 	}
 
-	// Apply environment variable overrides
-	applyEnvOverrides(cfg)
+	cfg := DefaultConfig()
+	if path != "" {
+		loaded, err := LoadFromFile(path)
+		if err != nil {
+			// If file doesn't exist, continue with defaults.
+			if !os.IsNotExist(err) {
+				return nil, err
+			}
+		} else {
+			cfg = loaded
+		}
+	}
+
+	// ENV > YAML > default
+	ApplyEnvOverrides(cfg)
 
 	// Validate
 	if err := cfg.Validate(); err != nil {
@@ -99,32 +100,27 @@ func FindConfigFile() string {
 	return ""
 }
 
-// applyEnvOverrides applies environment variable overrides to the config.
-func applyEnvOverrides(cfg *Config) {
+// ApplyEnvOverrides applies environment variable overrides to the config.
+// Precedence: MSCLI_* > OPENAI_* > YAML > defaults.
+func ApplyEnvOverrides(cfg *Config) {
 	// Model settings
-	if v := os.Getenv("MSCLI_PROVIDER"); v != "" {
-		cfg.Model.Provider = v
+	if v := os.Getenv("OPENAI_MODEL"); v != "" {
+		cfg.Model.Model = v
 	}
 	if v := os.Getenv("MSCLI_MODEL"); v != "" {
 		cfg.Model.Model = v
 	}
+	if v := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); v != "" {
+		cfg.Model.Key = v
+	}
 	if v := strings.TrimSpace(os.Getenv("MSCLI_API_KEY")); v != "" {
-		cfg.Model.APIKey = v
+		cfg.Model.Key = v
 	}
-	if v := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); v != "" && cfg.Model.APIKey == "" {
-		cfg.Model.APIKey = v
+	if v := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); v != "" {
+		cfg.Model.URL = v
 	}
-	if v := strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")); v != "" && cfg.Model.APIKey == "" {
-		cfg.Model.APIKey = v
-	}
-	if v := os.Getenv("MSCLI_ENDPOINT"); v != "" {
-		cfg.Model.Endpoint = v
-	}
-	if v := os.Getenv("MSCLI_BASE_URL"); v != "" {
-		cfg.Model.BaseURL = v
-	}
-	if v := os.Getenv("OPENAI_BASE_URL"); v != "" && cfg.Model.BaseURL == "" {
-		cfg.Model.BaseURL = v
+	if v := strings.TrimSpace(os.Getenv("MSCLI_BASE_URL")); v != "" {
+		cfg.Model.URL = v
 	}
 	if v := os.Getenv("MSCLI_TEMPERATURE"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {

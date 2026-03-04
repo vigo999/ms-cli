@@ -24,9 +24,9 @@ import (
 type BootstrapConfig struct {
 	Demo       bool
 	ConfigPath string
-	Provider   string // Override provider from config
+	URL        string // Override API URL from config
 	Model      string // Override model from config
-	APIKey     string // Override API key from config
+	Key        string // Override API key from config
 }
 
 // Bootstrap wires top-level dependencies.
@@ -58,15 +58,18 @@ func Bootstrap(cfg BootstrapConfig) (*Application, error) {
 	}
 	stateManager.ApplyToConfig(config)
 
+	// Keep ENV precedence even when state exists.
+	configs.ApplyEnvOverrides(config)
+
 	// Apply command-line overrides (highest priority)
-	if cfg.Provider != "" {
-		config.Model.Provider = cfg.Provider
+	if cfg.URL != "" {
+		config.Model.URL = cfg.URL
 	}
 	if cfg.Model != "" {
 		config.Model.Model = cfg.Model
 	}
-	if cfg.APIKey != "" {
-		config.Model.APIKey = cfg.APIKey
+	if cfg.Key != "" {
+		config.Model.Key = cfg.Key
 	}
 
 	// In demo mode, use stub engine
@@ -82,9 +85,6 @@ func Bootstrap(cfg BootstrapConfig) (*Application, error) {
 			Config:  config,
 		}, nil
 	}
-
-	// Fix endpoint to match provider
-	fixEndpointForProvider(config)
 
 	// Initialize LLM provider
 	provider, err := initProvider(config.Model)
@@ -142,89 +142,32 @@ func Bootstrap(cfg BootstrapConfig) (*Application, error) {
 
 // initProvider initializes the LLM provider.
 func initProvider(cfg configs.ModelConfig) (llm.Provider, error) {
-	switch cfg.Provider {
-	case "openai":
-		apiKey := strings.TrimSpace(cfg.APIKey)
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-		}
-		if apiKey == "" {
-			return nil, fmt.Errorf("OpenAI API key not found (set OPENAI_API_KEY or api_key in config)")
-		}
-
-		// Determine endpoint: use config if set, otherwise use default
-		// Supports both 'endpoint' and 'base_url' config fields
-		endpoint := cfg.Endpoint
-		if endpoint == "" {
-			endpoint = cfg.BaseURL
-		}
-		if endpoint == "" {
-			endpoint = "https://api.openai.com/v1"
-		}
-
-		client, err := openai.NewClient(openai.Config{
-			APIKey:   apiKey,
-			Endpoint: endpoint,
-			Model:    cfg.Model,
-			Timeout:  time.Duration(cfg.TimeoutSec) * time.Second,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return client, nil
-
-	case "openrouter":
-		apiKey := strings.TrimSpace(cfg.APIKey)
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
-		}
-		if apiKey == "" {
-			return nil, fmt.Errorf("OpenRouter API key not found (set OPENROUTER_API_KEY or api_key in config)")
-		}
-
-		// Determine endpoint: use config if set, otherwise use default
-		endpoint := cfg.Endpoint
-		if endpoint == "" {
-			endpoint = cfg.BaseURL
-		}
-		if endpoint == "" {
-			endpoint = "https://openrouter.ai/api/v1"
-		}
-
-		// Use unified openai provider with OpenRouter settings
-		client, err := openai.NewClient(openai.Config{
-			APIKey:   apiKey,
-			Endpoint: endpoint,
-			Model:    cfg.Model,
-			Timeout:  time.Duration(cfg.TimeoutSec) * time.Second,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return client, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported provider: %s", cfg.Provider)
+	key := strings.TrimSpace(cfg.Key)
+	if key == "" {
+		key = strings.TrimSpace(os.Getenv("MSCLI_API_KEY"))
 	}
-}
-
-// fixEndpointForProvider ensures the endpoint matches the selected provider.
-func fixEndpointForProvider(cfg *configs.Config) {
-	endpoint := cfg.Model.Endpoint
-	provider := cfg.Model.Provider
-
-	switch provider {
-	case "openai":
-		// If endpoint is empty or contains openrouter, reset to OpenAI default
-		if endpoint == "" || strings.Contains(endpoint, "openrouter.ai") {
-			cfg.Model.Endpoint = "https://api.openai.com/v1"
-		}
-	case "openrouter":
-		// If endpoint is empty or contains openai, reset to OpenRouter default
-		if endpoint == "" || strings.Contains(endpoint, "openai.com") {
-			cfg.Model.Endpoint = "https://openrouter.ai/api/v1"
-		}
+	if key == "" {
+		key = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	}
+	if key == "" {
+		return nil, fmt.Errorf("API key not found (set MSCLI_API_KEY/OPENAI_API_KEY or key in config)")
+	}
+
+	url := strings.TrimSpace(cfg.URL)
+	if url == "" {
+		url = "https://api.openai.com/v1"
+	}
+
+	client, err := openai.NewClient(openai.Config{
+		Key:     key,
+		URL:     url,
+		Model:   cfg.Model,
+		Timeout: time.Duration(cfg.TimeoutSec) * time.Second,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 // initTools initializes the tool registry.

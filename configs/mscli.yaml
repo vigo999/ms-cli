@@ -1,8 +1,12 @@
 model:
-  provider: openai
-  # OpenAI API endpoint - can also use 'base_url' for compatibility
-  # Environment variables: MSCLI_ENDPOINT, MSCLI_BASE_URL, or OPENAI_BASE_URL
-  endpoint: https://api.openai.com/v1
+  # OpenAI-compatible API base URL
+  # Environment variables (higher priority): MSCLI_BASE_URL (fallback: OPENAI_BASE_URL)
+  url: https://api.openai.com/v1
+  # Model name
+  # Environment variables (higher priority): MSCLI_MODEL (fallback: OPENAI_MODEL)
+  model: gpt-4o-mini
+  # API key (recommended to use env: MSCLI_API_KEY / OPENAI_API_KEY)
+  key: ""
 budget:
   max_tokens: 32768
   max_cost_usd: 10

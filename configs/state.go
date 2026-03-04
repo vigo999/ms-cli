@@ -12,9 +12,9 @@ import (
 
 // State holds user preferences that persist across sessions.
 type State struct {
-	Provider string `yaml:"provider,omitempty"`
-	Model    string `yaml:"model,omitempty"`
-	APIKey   string `yaml:"api_key,omitempty"`
+	Model        string `yaml:"model,omitempty"`
+	Key          string `yaml:"key,omitempty"`
+	LegacyAPIKey string `yaml:"api_key,omitempty"` // Backward compatibility.
 }
 
 // StateManager manages persistent state.
@@ -86,13 +86,6 @@ func (m *StateManager) Get() State {
 	return m.state
 }
 
-// SetProvider sets the provider.
-func (m *StateManager) SetProvider(provider string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.state.Provider = provider
-}
-
 // SetModel sets the model.
 func (m *StateManager) SetModel(model string) {
 	m.mu.Lock()
@@ -100,11 +93,11 @@ func (m *StateManager) SetModel(model string) {
 	m.state.Model = model
 }
 
-// SetAPIKey sets the API key.
-func (m *StateManager) SetAPIKey(apiKey string) {
+// SetKey sets the API key.
+func (m *StateManager) SetKey(apiKey string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.state.APIKey = apiKey
+	m.state.Key = apiKey
 }
 
 // ApplyToConfig applies saved state to config.
@@ -112,14 +105,13 @@ func (m *StateManager) ApplyToConfig(cfg *Config) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.state.Provider != "" {
-		cfg.Model.Provider = m.state.Provider
-	}
 	if m.state.Model != "" {
 		cfg.Model.Model = m.state.Model
 	}
-	if m.state.APIKey != "" {
-		cfg.Model.APIKey = m.state.APIKey
+	if m.state.Key != "" {
+		cfg.Model.Key = m.state.Key
+	} else if m.state.LegacyAPIKey != "" {
+		cfg.Model.Key = m.state.LegacyAPIKey
 	}
 }
 
@@ -128,7 +120,6 @@ func (m *StateManager) SaveFromConfig(cfg *Config) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.state.Provider = cfg.Model.Provider
 	m.state.Model = cfg.Model.Model
-	m.state.APIKey = cfg.Model.APIKey
+	m.state.Key = cfg.Model.Key
 }
