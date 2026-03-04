@@ -1,16 +1,13 @@
-// Package openai provides an OpenAI API compatible provider implementation.
-// Also supports OpenRouter and other OpenAI-compatible APIs.
+// Package openai provides an OpenAI-compatible provider implementation.
 package openai
 
 import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -25,15 +22,11 @@ const (
 
 // Config holds the OpenAI client configuration.
 type Config struct {
-	APIKey     string
-	Endpoint   string
+	Key        string
+	URL        string
 	Model      string
 	Timeout    time.Duration
 	HTTPClient *http.Client
-	// OpenRouter-specific settings
-	SiteURL    string // Optional: for rankings on openrouter.ai
-	SiteName   string // Optional: for rankings on openrouter.ai
-	DisableHTTP2 bool // Optional: disable HTTP/2 for compatibility
 }
 
 // Client implements the llm.Provider interface for OpenAI.
@@ -42,21 +35,16 @@ type Client struct {
 	endpoint   string
 	model      string
 	httpClient *http.Client
-	// OpenRouter-specific
-	siteURL    string
-	siteName   string
-	isOpenRouter bool
 }
 
 // NewClient creates a new OpenAI client.
-// Also supports OpenRouter-compatible endpoints.
 func NewClient(cfg Config) (*Client, error) {
-	apiKey := strings.TrimSpace(cfg.APIKey)
+	apiKey := strings.TrimSpace(cfg.Key)
 	if apiKey == "" {
-		return nil, fmt.Errorf("API key is required")
+		return nil, fmt.Errorf("key is required")
 	}
 
-	endpoint := cfg.Endpoint
+	endpoint := cfg.URL
 	if endpoint == "" {
 		endpoint = defaultEndpoint
 	}
@@ -66,63 +54,21 @@ func NewClient(cfg Config) (*Client, error) {
 		timeout = defaultTimeout
 	}
 
-	// Detect OpenRouter endpoint
-	isOpenRouter := strings.Contains(endpoint, "openrouter.ai")
-
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
-		if isOpenRouter || cfg.DisableHTTP2 {
-			// Create a custom transport that disables HTTP/2 for compatibility
-			transport := &http.Transport{
-				TLSClientConfig: &tls.Config{
-					MinVersion: tls.VersionTLS12,
-				},
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				ForceAttemptHTTP2:     false, // Disable HTTP/2
-				MaxIdleConns:          100,
-				IdleConnTimeout:       90 * time.Second,
-				TLSHandshakeTimeout:   10 * time.Second,
-				ExpectContinueTimeout: 1 * time.Second,
-			}
-			httpClient = &http.Client{
-				Timeout:   timeout,
-				Transport: transport,
-			}
-		} else {
-			httpClient = &http.Client{Timeout: timeout}
-		}
-	}
-
-	// Set defaults for OpenRouter required headers
-	siteURL := cfg.SiteURL
-	if siteURL == "" {
-		siteURL = "https://github.com/vigo999/ms-cli"
-	}
-
-	siteName := cfg.SiteName
-	if siteName == "" {
-		siteName = "ms-cli"
+		httpClient = &http.Client{Timeout: timeout}
 	}
 
 	return &Client{
-		apiKey:       apiKey,
-		endpoint:     strings.TrimRight(endpoint, "/"),
-		model:        cfg.Model,
-		httpClient:   httpClient,
-		siteURL:      siteURL,
-		siteName:     siteName,
-		isOpenRouter: isOpenRouter,
+		apiKey:     apiKey,
+		endpoint:   strings.TrimRight(endpoint, "/"),
+		model:      cfg.Model,
+		httpClient: httpClient,
 	}, nil
 }
 
 // Name returns the provider name.
 func (c *Client) Name() string {
-	if c.isOpenRouter {
-		return "openrouter"
-	}
 	return "openai"
 }
 
@@ -184,18 +130,6 @@ func (c *Client) CompleteStream(ctx context.Context, req *llm.CompletionRequest)
 
 // AvailableModels returns the list of available models.
 func (c *Client) AvailableModels() []llm.ModelInfo {
-	if c.isOpenRouter {
-		return []llm.ModelInfo{
-			{ID: "openai/gpt-4o", Provider: "openrouter", MaxTokens: 128000},
-			{ID: "openai/gpt-4o-mini", Provider: "openrouter", MaxTokens: 128000},
-			{ID: "anthropic/claude-3.5-sonnet", Provider: "openrouter", MaxTokens: 200000},
-			{ID: "anthropic/claude-3-opus", Provider: "openrouter", MaxTokens: 200000},
-			{ID: "anthropic/claude-3-haiku", Provider: "openrouter", MaxTokens: 200000},
-			{ID: "google/gemini-1.5-pro", Provider: "openrouter", MaxTokens: 2000000},
-			{ID: "meta-llama/llama-3.1-405b-instruct", Provider: "openrouter", MaxTokens: 128000},
-			{ID: "deepseek/deepseek-chat", Provider: "openrouter", MaxTokens: 64000},
-		}
-	}
 	return []llm.ModelInfo{
 		{ID: "gpt-4o", Provider: "openai", MaxTokens: 128000},
 		{ID: "gpt-4o-mini", Provider: "openai", MaxTokens: 128000},
@@ -245,14 +179,6 @@ func (c *Client) doRequest(ctx context.Context, body []byte) (*http.Response, er
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	// OpenRouter-specific headers (also beneficial for other compatible APIs)
-	if c.isOpenRouter {
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("User-Agent", "ms-cli/0.2.0")
-		req.Header.Set("HTTP-Referer", c.siteURL)
-		req.Header.Set("X-Title", c.siteName)
-	}
 
 	return c.httpClient.Do(req)
 }
@@ -333,7 +259,7 @@ func (c *Client) convertTools(tools []llm.Tool) []tool {
 func (c *Client) convertResponse(resp *chatCompletionResponse) *llm.CompletionResponse {
 	if len(resp.Choices) == 0 {
 		return &llm.CompletionResponse{
-			ID:   resp.ID,
+			ID:    resp.ID,
 			Model: resp.Model,
 		}
 	}
@@ -422,9 +348,9 @@ type chatCompletionResponse struct {
 }
 
 type choice struct {
-	Index        int      `json:"index"`
-	Message      message  `json:"message"`
-	FinishReason string   `json:"finish_reason"`
+	Index        int     `json:"index"`
+	Message      message `json:"message"`
+	FinishReason string  `json:"finish_reason"`
 }
 
 type usage struct {
@@ -436,18 +362,18 @@ type usage struct {
 // Streaming types.
 
 type streamResponse struct {
-	ID      string        `json:"id"`
-	Object  string        `json:"object"`
-	Created int64         `json:"created"`
-	Model   string        `json:"model"`
+	ID      string         `json:"id"`
+	Object  string         `json:"object"`
+	Created int64          `json:"created"`
+	Model   string         `json:"model"`
 	Choices []streamChoice `json:"choices"`
 	Usage   *usage         `json:"usage,omitempty"`
 }
 
 type streamChoice struct {
-	Index        int             `json:"index"`
-	Delta        delta           `json:"delta"`
-	FinishReason *string         `json:"finish_reason"`
+	Index        int     `json:"index"`
+	Delta        delta   `json:"delta"`
+	FinishReason *string `json:"finish_reason"`
 }
 
 type delta struct {

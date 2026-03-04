@@ -19,10 +19,8 @@ type Config struct {
 
 // ModelConfig holds the LLM model configuration.
 type ModelConfig struct {
-	Provider    string            `yaml:"provider"`
-	Endpoint    string            `yaml:"endpoint,omitempty"`
-	BaseURL     string            `yaml:"base_url,omitempty"`
-	APIKey      string            `yaml:"api_key,omitempty"`
+	URL         string            `yaml:"url,omitempty"`
+	Key         string            `yaml:"key,omitempty"`
 	Model       string            `yaml:"model"`
 	Temperature float64           `yaml:"temperature"`
 	MaxTokens   int               `yaml:"max_tokens"`
@@ -47,11 +45,11 @@ type UIConfig struct {
 
 // PermissionsConfig holds the permission control configuration.
 type PermissionsConfig struct {
-	SkipRequests   bool              `yaml:"skip_requests"`
-	DefaultLevel   string            `yaml:"default_level"`
-	ToolPolicies   map[string]string `yaml:"tool_policies,omitempty"`
-	AllowedTools   []string          `yaml:"allowed_tools"`
-	BlockedTools   []string          `yaml:"blocked_tools,omitempty"`
+	SkipRequests bool              `yaml:"skip_requests"`
+	DefaultLevel string            `yaml:"default_level"`
+	ToolPolicies map[string]string `yaml:"tool_policies,omitempty"`
+	AllowedTools []string          `yaml:"allowed_tools"`
+	BlockedTools []string          `yaml:"blocked_tools,omitempty"`
 }
 
 // ContextConfig holds the context management configuration.
@@ -81,10 +79,10 @@ type SkillsConfig struct {
 
 // ExecutionConfig holds the execution configuration.
 type ExecutionConfig struct {
-	Mode           string            `yaml:"mode"`
-	TimeoutSec     int               `yaml:"timeout_sec"`
-	MaxConcurrency int               `yaml:"max_concurrency"`
-	Docker         DockerConfig      `yaml:"docker,omitempty"`
+	Mode           string       `yaml:"mode"`
+	TimeoutSec     int          `yaml:"timeout_sec"`
+	MaxConcurrency int          `yaml:"max_concurrency"`
+	Docker         DockerConfig `yaml:"docker,omitempty"`
 }
 
 // DockerConfig holds the Docker execution configuration.
@@ -100,8 +98,7 @@ type DockerConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Model: ModelConfig{
-			Provider:    "openai",
-			Endpoint:    "https://api.openai.com/v1",
+			URL:         "https://api.openai.com/v1",
 			Model:       "gpt-4o-mini",
 			Temperature: 0.7,
 			MaxTokens:   4096,
@@ -162,20 +159,8 @@ func DefaultConfig() *Config {
 
 // Validate validates the configuration.
 func (c *Config) Validate() error {
-	if c.Model.Provider == "" {
-		return fmt.Errorf("model provider is required")
-	}
-
-	supportedProviders := []string{"openai", "openrouter"}
-	found := false
-	for _, p := range supportedProviders {
-		if c.Model.Provider == p {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("unsupported model provider: %s", c.Model.Provider)
+	if c.Model.URL == "" {
+		return fmt.Errorf("model url is required")
 	}
 
 	if c.Model.Model == "" {
@@ -199,17 +184,11 @@ func (c *Config) Validate() error {
 
 // Merge merges another config into this one (overwriting values).
 func (c *Config) Merge(other *Config) {
-	if other.Model.Provider != "" {
-		c.Model.Provider = other.Model.Provider
+	if other.Model.URL != "" {
+		c.Model.URL = other.Model.URL
 	}
-	if other.Model.Endpoint != "" {
-		c.Model.Endpoint = other.Model.Endpoint
-	}
-	if other.Model.BaseURL != "" {
-		c.Model.BaseURL = other.Model.BaseURL
-	}
-	if other.Model.APIKey != "" {
-		c.Model.APIKey = other.Model.APIKey
+	if other.Model.Key != "" {
+		c.Model.Key = other.Model.Key
 	}
 	if other.Model.Model != "" {
 		c.Model.Model = other.Model.Model

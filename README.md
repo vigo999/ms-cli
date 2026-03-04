@@ -33,15 +33,14 @@ go run ./app
 ### Command-Line Options
 
 ```bash
-# Select provider and model
-./ms-cli --provider openai --model gpt-4o
-./ms-cli --provider openrouter --model anthropic/claude-3.5-sonnet
+# Select URL and model
+./ms-cli --url https://api.openai.com/v1 --model gpt-4o
 
 # Use custom config file
 ./ms-cli --config /path/to/config.yaml
 
 # Set API key directly
-./ms-cli --provider openai --api-key sk-xxx
+./ms-cli --api-key sk-xxx
 ```
 
 ## Commands
@@ -52,15 +51,15 @@ In TUI input, use slash commands:
 - `/roadmap status [path]` (default: `roadmap.yaml`)
 - `/weekly status [path]` (default: `weekly.md`)
 
-### Model & Provider Commands
+### Model Commands
 - `/model` - Show current model configuration
-- `/model <model-name>` - Switch to a new model (keep current provider)
-- `/model <provider>:<model>` - Switch both provider and model (e.g., `/model openrouter:anthropic/claude-3-opus`)
-- `/provider <name>` - Switch provider (`openai` or `openrouter`)
+- `/model <model-name>` - Switch to a new model
+- `/model <openai:model>` - Backward-compatible provider prefix format (e.g., `/model openai:gpt-4o-mini`)
 
 ### Session Commands
 - `/compact` - Compact conversation context to save tokens
 - `/clear` - Clear chat history
+- `/mouse [on|off|toggle|status]` - Control mouse wheel scrolling
 - `/exit` - Exit the application
 - `/help` - Show available commands
 
@@ -75,6 +74,7 @@ Type `/` to see available slash commands. Use `↑`/`↓` keys to navigate and `
 | Key | Action |
 |-----|--------|
 | `enter` | Send input |
+| `mouse wheel` | Scroll chat |
 | `pgup` / `pgdn` | Scroll chat |
 | `up` / `down` | Scroll chat / Navigate slash suggestions |
 | `home` / `end` | Jump to top / bottom |
@@ -157,18 +157,20 @@ Configuration can be provided via:
 
 | Variable | Description |
 |----------|-------------|
-| `MSCLI_PROVIDER` | LLM provider (`openai` or `openrouter`) |
+| `MSCLI_BASE_URL` | OpenAI-compatible API base URL (higher priority) |
 | `MSCLI_MODEL` | Model name |
-| `MSCLI_API_KEY` | API key |
-| `OPENAI_API_KEY` | OpenAI API key (fallback) |
-| `OPENROUTER_API_KEY` | OpenRouter API key (fallback) |
+| `MSCLI_API_KEY` | API key (higher priority) |
+| `OPENAI_BASE_URL` | API base URL (fallback) |
+| `OPENAI_MODEL` | Model name (fallback) |
+| `OPENAI_API_KEY` | API key (fallback) |
 
 ### Example Config File
 
 ```yaml
 model:
-  provider: openrouter
-  model: anthropic/claude-3.5-sonnet
+  url: https://api.openai.com/v1
+  model: gpt-4o-mini
+  key: ""
   temperature: 0.7
 budget:
   max_tokens: 32768

@@ -29,9 +29,9 @@ func (a *Application) Run() error {
 func (a *Application) runReal() error {
 	userCh := make(chan string, 8)
 	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.MaxTokens)
-	// Mouse support disabled to allow free text selection.
-	// Use PgUp/PgDn or ↑/↓ keys to scroll.
-	p := tea.NewProgram(tui, tea.WithAltScreen())
+	// Mouse wheel scrolling is enabled by default.
+	// Use /mouse off to disable if needed.
+	p := tea.NewProgram(tui, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	go a.inputLoop(userCh)
 

@@ -24,15 +24,15 @@ var chatLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
 
 // App is the TUI root model.
 type App struct {
-	state        model.State
-	viewport     components.Viewport
-	input        components.TextInput
-	thinking     components.ThinkingSpinner
-	width        int
-	height       int
-	eventCh      <-chan model.Event
-	userCh       chan<- string // sends user input to the engine bridge
-	lastInterrupt time.Time   // track last ctrl+c for double-press exit
+	state         model.State
+	viewport      components.Viewport
+	input         components.TextInput
+	thinking      components.ThinkingSpinner
+	width         int
+	height        int
+	eventCh       <-chan model.Event
+	userCh        chan<- string // sends user input to the engine bridge
+	lastInterrupt time.Time     // track last ctrl+c for double-press exit
 }
 
 // New creates a new App driven by the given event channel.
@@ -84,6 +84,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleKey(msg)
 
 	case tea.MouseMsg:
+		if !a.state.MouseEnabled {
+			return a, nil
+		}
 		var cmd tea.Cmd
 		a.viewport, cmd = a.viewport.Update(msg)
 		return a, cmd
@@ -191,6 +194,8 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
+	var eventCmd tea.Cmd
+
 	switch ev.Type {
 	case model.AgentThinking:
 		// Start thinking - set flag and ensure we have a thinking message
@@ -321,11 +326,31 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		mi.Name = ev.Message
 		a.state = a.state.WithModel(mi)
 
+	case model.MouseModeToggle:
+		enabled := a.state.MouseEnabled
+		switch strings.ToLower(strings.TrimSpace(ev.Message)) {
+		case "", "toggle":
+			enabled = !enabled
+		case "on", "enable", "enabled", "true", "1":
+			enabled = true
+		case "off", "disable", "disabled", "false", "0":
+			enabled = false
+		}
+		a.state = a.state.WithMouseEnabled(enabled)
+		if enabled {
+			eventCmd = tea.EnableMouseCellMotion
+		} else {
+			eventCmd = tea.DisableMouse
+		}
+
 	case model.Done:
 		return a, tea.Quit
 	}
 
 	a.updateViewport()
+	if eventCmd != nil {
+		return a, tea.Batch(eventCmd, a.waitForEvent)
+	}
 	return a, a.waitForEvent
 }
 
@@ -337,15 +362,9 @@ func (a App) replaceThinking(m model.Message) model.State {
 		}
 	}
 	msgs = append(msgs, m)
-	return model.State{
-		Version:    a.state.Version,
-		Model:      a.state.Model,
-		Messages:   msgs,
-		WorkDir:    a.state.WorkDir,
-		RepoURL:    a.state.RepoURL,
-		Stats:      a.state.Stats,
-		IsThinking: a.state.IsThinking,
-	}
+	next := a.state
+	next.Messages = msgs
+	return next
 }
 
 func (a App) appendToLastTool(line string) model.State {
@@ -364,15 +383,9 @@ func (a App) appendToLastTool(line string) model.State {
 		}
 	}
 
-	return model.State{
-		Version:    a.state.Version,
-		Model:      a.state.Model,
-		Messages:   msgs,
-		WorkDir:    a.state.WorkDir,
-		RepoURL:    a.state.RepoURL,
-		Stats:      a.state.Stats,
-		IsThinking: a.state.IsThinking,
-	}
+	next := a.state
+	next.Messages = msgs
+	return next
 }
 
 func (a *App) updateViewport() {

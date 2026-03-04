@@ -79,6 +79,19 @@ func NewEngine(cfg EngineConfig, provider llm.Provider, tools *tools.Registry) *
 
 // SetContextManager sets the context manager.
 func (e *Engine) SetContextManager(cm *ctxmanager.Manager) {
+	if cm == nil {
+		return
+	}
+
+	// Preserve system prompt when swapping context manager.
+	if cm.GetSystemPrompt() == nil {
+		switch {
+		case e.ctxManager != nil && e.ctxManager.GetSystemPrompt() != nil:
+			cm.SetSystemPrompt(e.ctxManager.GetSystemPrompt().Content)
+		case e.config.SystemPrompt != "":
+			cm.SetSystemPrompt(e.config.SystemPrompt)
+		}
+	}
 	e.ctxManager = cm
 }
 

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/vigo999/ms-cli/agent/context"
@@ -30,26 +29,20 @@ type Application struct {
 	traceWriter  trace.Writer
 }
 
-// SetProvider creates a new LLM provider and reinitializes the engine with the new provider.
+// SetProvider updates model/key and reinitializes the engine.
+// providerName is kept for command compatibility and only accepts "openai".
 func (a *Application) SetProvider(providerName, modelName, apiKey string) error {
-	// Update config
-	if providerName != "" {
-		a.Config.Model.Provider = providerName
+	if providerName != "" && providerName != "openai" {
+		return fmt.Errorf("unsupported provider: %s (only openai-compatible is supported)", providerName)
 	}
+
+	// Update config
 	if modelName != "" {
 		a.Config.Model.Model = modelName
 	}
 	if apiKey != "" {
-		a.Config.Model.APIKey = apiKey
+		a.Config.Model.Key = apiKey
 	}
-
-	// Validate provider
-	if a.Config.Model.Provider == "" {
-		return fmt.Errorf("provider is required")
-	}
-
-	// Fix endpoint if it doesn't match the provider
-	a.fixEndpointForProvider()
 
 	// Initialize new provider
 	provider, err := initProvider(a.Config.Model)
@@ -90,23 +83,4 @@ func (a *Application) SaveState() error {
 	}
 	a.stateManager.SaveFromConfig(a.Config)
 	return a.stateManager.Save()
-}
-
-// fixEndpointForProvider ensures the endpoint matches the selected provider.
-func (a *Application) fixEndpointForProvider() {
-	endpoint := a.Config.Model.Endpoint
-	provider := a.Config.Model.Provider
-
-	switch provider {
-	case "openai":
-		// If endpoint is empty or contains openrouter, reset to OpenAI default
-		if endpoint == "" || strings.Contains(endpoint, "openrouter.ai") {
-			a.Config.Model.Endpoint = "https://api.openai.com/v1"
-		}
-	case "openrouter":
-		// If endpoint is empty or contains openai, reset to OpenRouter default
-		if endpoint == "" || strings.Contains(endpoint, "openai.com") {
-			a.Config.Model.Endpoint = "https://openrouter.ai/api/v1"
-		}
-	}
 }

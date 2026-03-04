@@ -125,13 +125,7 @@ func (r *Registry) registerDefaults() {
 	r.Register(Command{
 		Name:        "/model",
 		Description: "Show or switch model",
-		Usage:       "/model [provider:]model",
-	})
-
-	r.Register(Command{
-		Name:        "/provider",
-		Description: "Show or switch provider",
-		Usage:       "/provider [openai|openrouter]",
+		Usage:       "/model [openai:]model",
 	})
 
 	r.Register(Command{
@@ -168,6 +162,12 @@ func (r *Registry) registerDefaults() {
 		Name:        "/yolo",
 		Description: "Toggle yolo mode (auto-approve all)",
 		Usage:       "/yolo",
+	})
+
+	r.Register(Command{
+		Name:        "/mouse",
+		Description: "Toggle mouse wheel scrolling",
+		Usage:       "/mouse [on|off|toggle|status]",
 	})
 
 	r.Register(Command{

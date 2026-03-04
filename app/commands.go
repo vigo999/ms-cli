@@ -26,8 +26,6 @@ func (a *Application) handleCommand(input string) {
 		a.cmdWeekly(parts[1:])
 	case "/model":
 		a.cmdModel(parts[1:])
-	case "/provider":
-		a.cmdProvider(parts[1:])
 	case "/exit":
 		a.cmdExit()
 	case "/compact":
@@ -40,6 +38,8 @@ func (a *Application) handleCommand(input string) {
 		a.cmdPermission(parts[1:])
 	case "/yolo":
 		a.cmdYolo()
+	case "/mouse":
+		a.cmdMouse(parts[1:])
 	case "/help":
 		a.cmdHelp()
 	default:
@@ -131,90 +131,61 @@ func (a *Application) cmdWeekly(args []string) {
 // cmdModel handles "/model [model-name]".
 func (a *Application) cmdModel(args []string) {
 	if len(args) == 0 {
-		// Show current model info
+		// Show current model config.
 		a.showCurrentModel()
 		return
 	}
 
-	// Check if it's a provider:model format
+	// Accept "openai:model" for backward compatibility.
 	modelArg := args[0]
 	if strings.Contains(modelArg, ":") {
 		parts := strings.SplitN(modelArg, ":", 2)
-		providerName := parts[0]
+		providerName := strings.TrimSpace(parts[0])
 		modelName := parts[1]
-		a.switchProviderAndModel(providerName, modelName)
+		if providerName != "" && providerName != "openai" {
+			a.EventCh <- model.Event{
+				Type:    model.AgentReply,
+				Message: fmt.Sprintf("Unsupported provider prefix: %s (only openai-compatible is supported)", providerName),
+			}
+			return
+		}
+		a.switchModel(modelName)
 		return
 	}
 
-	// Just switch model (keep current provider)
+	// Just switch model.
 	a.switchModel(modelArg)
 }
 
-// cmdProvider handles "/provider [name]".
-func (a *Application) cmdProvider(args []string) {
-	if len(args) == 0 {
-		// Show current provider
-		a.showCurrentModel()
-		return
-	}
-
-	providerName := args[0]
-	// Use default model for the provider
-	var modelName string
-	switch providerName {
-	case "openai":
-		modelName = "gpt-4o-mini"
-	case "openrouter":
-		modelName = "anthropic/claude-3.5-sonnet"
-	default:
-		a.EventCh <- model.Event{
-			Type:    model.AgentReply,
-			Message: fmt.Sprintf("Unknown provider: %s. Supported providers: openai, openrouter", providerName),
-		}
-		return
-	}
-
-	a.switchProviderAndModel(providerName, modelName)
-}
-
-// showCurrentModel displays current provider and model.
+// showCurrentModel displays current URL/model/key status.
 func (a *Application) showCurrentModel() {
 	modelName := a.Config.Model.Model
-	provider := a.Config.Model.Provider
-	endpoint := a.Config.Model.Endpoint
-	if endpoint == "" {
-		switch provider {
-		case "openai":
-			endpoint = "https://api.openai.com/v1"
-		case "openrouter":
-			endpoint = "https://openrouter.ai/api/v1"
-		}
+	url := a.Config.Model.URL
+	if url == "" {
+		url = "https://api.openai.com/v1"
 	}
 
 	apiKeyStatus := "not set"
-	if a.Config.Model.APIKey != "" || 
-	   (provider == "openai" && getEnv("OPENAI_API_KEY") != "") ||
-	   (provider == "openrouter" && getEnv("OPENROUTER_API_KEY") != "") {
+	if a.Config.Model.Key != "" ||
+		getEnv("MSCLI_API_KEY") != "" ||
+		getEnv("OPENAI_API_KEY") != "" {
 		apiKeyStatus = "set"
 	}
 
 	msg := fmt.Sprintf(`Current Model Configuration:
 
-  Provider: %s
-  Model:    %s
-  Endpoint: %s
-  API Key:  %s
+  URL:   %s
+  Model: %s
+  Key:   %s
 
 To switch model:
-  /model <model-name>           (keep current provider)
-  /model <provider>:<model>     (switch both provider and model)
-  /provider <provider-name>     (switch provider with default model)
+  /model <model-name>
+  /model openai:<model>         (backward-compatible prefix)
 
 Examples:
   /model gpt-4o
-  /model openrouter:anthropic/claude-3-opus
-  /provider openrouter`,
-		provider, modelName, endpoint, apiKeyStatus)
+  /model openai:gpt-4o-mini`,
+		url, modelName, apiKeyStatus)
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
@@ -222,7 +193,7 @@ Examples:
 	}
 }
 
-// switchModel switches to a new model (keeping current provider).
+// switchModel switches to a new model.
 func (a *Application) switchModel(modelName string) {
 	a.EventCh <- model.Event{Type: model.AgentThinking}
 
@@ -246,49 +217,14 @@ func (a *Application) switchModel(modelName string) {
 	if err := a.SaveState(); err != nil {
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
-			Message: fmt.Sprintf("Model switched to: %s (provider: %s). Warning: failed to save state: %v", a.Config.Model.Model, a.Config.Model.Provider, err),
+			Message: fmt.Sprintf("Model switched to: %s. Warning: failed to save state: %v", a.Config.Model.Model, err),
 		}
 		return
 	}
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
-		Message: fmt.Sprintf("Model switched to: %s (provider: %s)", a.Config.Model.Model, a.Config.Model.Provider),
-	}
-}
-
-// switchProviderAndModel switches both provider and model.
-func (a *Application) switchProviderAndModel(providerName, modelName string) {
-	a.EventCh <- model.Event{Type: model.AgentThinking}
-
-	err := a.SetProvider(providerName, modelName, "")
-	if err != nil {
-		a.EventCh <- model.Event{
-			Type:     model.ToolError,
-			ToolName: "provider",
-			Message:  fmt.Sprintf("Failed to switch provider: %v", err),
-		}
-		return
-	}
-
-	// Update UI model name
-	a.EventCh <- model.Event{
-		Type:    model.ModelUpdate,
-		Message: a.Config.Model.Model,
-	}
-
-	// Save state to disk
-	if err := a.SaveState(); err != nil {
-		a.EventCh <- model.Event{
-			Type:    model.AgentReply,
-			Message: fmt.Sprintf("Switched to provider: %s, model: %s. Warning: failed to save state: %v", a.Config.Model.Provider, a.Config.Model.Model, err),
-		}
-		return
-	}
-
-	a.EventCh <- model.Event{
-		Type:    model.AgentReply,
-		Message: fmt.Sprintf("Switched to provider: %s, model: %s", a.Config.Model.Provider, a.Config.Model.Model),
+		Message: fmt.Sprintf("Model switched to: %s", a.Config.Model.Model),
 	}
 }
 
@@ -343,21 +279,24 @@ func (a *Application) cmdClear() {
 func (a *Application) cmdTest() {
 	a.EventCh <- model.Event{Type: model.AgentThinking}
 
-	// Get current provider info
-	provider := a.Config.Model.Provider
+	// Get current model config.
 	modelName := a.Config.Model.Model
+	url := a.Config.Model.URL
+	if url == "" {
+		url = "https://api.openai.com/v1"
+	}
 	apiKeyStatus := "not set"
-	if a.Config.Model.APIKey != "" {
-		apiKeyStatus = "set (" + fmt.Sprintf("%d chars", len(a.Config.Model.APIKey)) + ")"
+	if a.Config.Model.Key != "" {
+		apiKeyStatus = "set (" + fmt.Sprintf("%d chars", len(a.Config.Model.Key)) + ")"
 	}
 
 	msg := fmt.Sprintf(`API Connection Test:
 
-  Provider: %s
-  Model:    %s
-  API Key:  %s
+  URL:     %s
+  Model:   %s
+  API Key: %s
 
-Testing connectivity...`, provider, modelName, apiKeyStatus)
+Testing connectivity...`, url, modelName, apiKeyStatus)
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
@@ -475,6 +414,36 @@ func (a *Application) cmdYolo() {
 	}
 }
 
+// cmdMouse handles "/mouse [on|off|toggle|status]".
+func (a *Application) cmdMouse(args []string) {
+	mode := "toggle"
+	if len(args) > 0 {
+		mode = strings.ToLower(strings.TrimSpace(args[0]))
+	}
+
+	switch mode {
+	case "on", "enable", "enabled":
+		a.EventCh <- model.Event{Type: model.MouseModeToggle, Message: "on"}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Mouse scrolling enabled. Use wheel to scroll chat."}
+	case "off", "disable", "disabled":
+		a.EventCh <- model.Event{Type: model.MouseModeToggle, Message: "off"}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Mouse scrolling disabled."}
+	case "toggle":
+		a.EventCh <- model.Event{Type: model.MouseModeToggle, Message: "toggle"}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Mouse scrolling toggled."}
+	case "status":
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: "Use `/mouse on` to enable scroll wheel, `/mouse off` to disable, `/mouse toggle` to switch.",
+		}
+	default:
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: "Usage: /mouse [on|off|toggle|status]",
+		}
+	}
+}
+
 // cmdHelp handles "/help".
 func (a *Application) cmdHelp() {
 	helpText := `Available commands:
@@ -482,21 +451,19 @@ func (a *Application) cmdHelp() {
   /roadmap status [path]  Check roadmap status (default: roadmap.yaml)
   /weekly status [path]   Check weekly update status (default: weekly.md)
   /model [model-name]     Show or switch model
-  /provider [name]        Show or switch provider
   /test                   Test API connectivity
   /permission [tool] [level]  Manage tool permissions
   /yolo                   Toggle auto-approve mode
+  /mouse [on|off|toggle|status] Toggle mouse wheel scrolling
   /exit                   Exit the application
   /compact                Compact conversation context to save tokens
   /clear                  Clear chat history
   /help                   Show this help message
 
-Model/Provider Commands:
+Model Commands:
   /model                  Show current configuration
-  /model gpt-4o           Switch to gpt-4o (keep provider)
-  /model openrouter:claude-3-opus  Switch to OpenRouter with Claude 3 Opus
-  /provider openai        Switch to OpenAI provider
-  /provider openrouter    Switch to OpenRouter provider
+  /model gpt-4o           Switch to gpt-4o
+  /model openai:gpt-4o    Backward-compatible format
 
 Permission Commands:
   /permission             Show current permission settings
@@ -513,16 +480,19 @@ Permission Levels:
 Keybindings:
   enter      Send input
   ↑/↓        Navigate slash suggestions
+  mouse wheel Scroll chat
   pgup/pgdn  Scroll chat
   home/end   Jump to top/bottom
   /          Start a slash command
   ctrl+c     Cancel/Quit (press twice to exit)
 
 Environment Variables:
-  MSCLI_PROVIDER          Default provider (openai, openrouter)
+  MSCLI_BASE_URL          OpenAI-compatible base URL
   MSCLI_MODEL             Default model
-  OPENAI_API_KEY          API key for OpenAI
-  OPENROUTER_API_KEY      API key for OpenRouter`
+  MSCLI_API_KEY           API key
+  OPENAI_BASE_URL         Base URL (fallback)
+  OPENAI_MODEL            Model (fallback)
+  OPENAI_API_KEY          API key (fallback)`
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,

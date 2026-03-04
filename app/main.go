@@ -11,18 +11,18 @@ func main() {
 	var (
 		demo       = flag.Bool("demo", false, "Run in demo mode")
 		configPath = flag.String("config", "", "Path to config file")
-		provider   = flag.String("provider", "", "LLM provider (openai, openrouter)")
+		url        = flag.String("url", "", "OpenAI-compatible base URL")
 		model      = flag.String("model", "", "Model name")
-		apiKey     = flag.String("api-key", "", "API key for the provider")
+		apiKey     = flag.String("api-key", "", "API key")
 	)
 	flag.Parse()
 
 	app, err := Bootstrap(BootstrapConfig{
 		Demo:       *demo,
 		ConfigPath: *configPath,
-		Provider:   *provider,
+		URL:        *url,
 		Model:      *model,
-		APIKey:     *apiKey,
+		Key:        *apiKey,
 	})
 	if err != nil {
 		log.Fatalf("Failed to bootstrap: %v", err)
