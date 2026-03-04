@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -23,9 +24,9 @@ func (a *Application) Run() error {
 // channel, dispatches to the engine, and sends resulting events back.
 func (a *Application) runReal() error {
 	userCh := make(chan string, 8)
-	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model)
-	// Note: tea.WithMouseCellMotion() is intentionally not used to allow
-	// terminal mouse selection and copy functionality
+	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.MaxTokens)
+	// Mouse support disabled to allow free text selection.
+	// Use PgUp/PgDn or ↑/↓ keys to scroll.
 	p := tea.NewProgram(tui, tea.WithAltScreen())
 
 	go a.inputLoop(userCh)
@@ -73,10 +74,15 @@ func (a *Application) runTask(description string) {
 
 	events, err := a.Engine.Run(task)
 	if err != nil {
+		// Provide user-friendly error message
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline") {
+			errMsg = fmt.Sprintf("%s\n\nTip: The request timed out. This can happen with long conversations. Try:\n  1. Run /compact to reduce context size\n  2. Start a new conversation with /clear\n  3. Increase timeout in config (model.timeout_sec)", errMsg)
+		}
 		a.EventCh <- model.Event{
 			Type:     model.ToolError,
 			ToolName: "Engine",
-			Message:  err.Error(),
+			Message:  errMsg,
 		}
 		return
 	}
@@ -95,76 +101,107 @@ func (a *Application) convertEvent(ev loop.Event) *model.Event {
 	switch ev.Type {
 	case loop.EventAgentReply:
 		return &model.Event{
-			Type:    model.AgentReply,
-			Message: ev.Message,
+			Type:       model.AgentReply,
+			Message:    ev.Message,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventAgentThinking:
 		return &model.Event{
-			Type: model.AgentThinking,
+			Type:       model.AgentThinking,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventToolRead:
 		return &model.Event{
-			Type:     model.ToolRead,
-			Message:  ev.Message,
-			ToolName: ev.ToolName,
-			Summary:  ev.Summary,
+			Type:       model.ToolRead,
+			Message:    ev.Message,
+			ToolName:   ev.ToolName,
+			Summary:    ev.Summary,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventToolGrep:
 		return &model.Event{
-			Type:     model.ToolGrep,
-			Message:  ev.Message,
-			ToolName: ev.ToolName,
-			Summary:  ev.Summary,
+			Type:       model.ToolGrep,
+			Message:    ev.Message,
+			ToolName:   ev.ToolName,
+			Summary:    ev.Summary,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventToolGlob:
 		return &model.Event{
-			Type:     model.ToolGlob,
-			Message:  ev.Message,
-			ToolName: ev.ToolName,
-			Summary:  ev.Summary,
+			Type:       model.ToolGlob,
+			Message:    ev.Message,
+			ToolName:   ev.ToolName,
+			Summary:    ev.Summary,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventToolEdit:
 		return &model.Event{
-			Type:     model.ToolEdit,
-			Message:  ev.Message,
-			ToolName: ev.ToolName,
+			Type:       model.ToolEdit,
+			Message:    ev.Message,
+			ToolName:   ev.ToolName,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventToolWrite:
 		return &model.Event{
-			Type:     model.ToolWrite,
-			Message:  ev.Message,
-			ToolName: ev.ToolName,
+			Type:       model.ToolWrite,
+			Message:    ev.Message,
+			ToolName:   ev.ToolName,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventToolError:
 		return &model.Event{
-			Type:     model.ToolError,
-			Message:  ev.Message,
-			ToolName: ev.ToolName,
+			Type:       model.ToolError,
+			Message:    ev.Message,
+			ToolName:   ev.ToolName,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventCmdStarted:
 		return &model.Event{
-			Type:    model.CmdStarted,
-			Message: ev.Message,
+			Type:       model.CmdStarted,
+			Message:    ev.Message,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventAnalysisReady:
 		return &model.Event{
-			Type:    model.AnalysisReady,
-			Message: ev.Message,
+			Type:       model.AnalysisReady,
+			Message:    ev.Message,
+			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
+			TokensUsed: ev.TokensUsed,
 		}
 
 	case loop.EventTokenUpdate:
 		return &model.Event{
 			Type:       model.TokenUpdate,
 			CtxUsed:    ev.CtxUsed,
+			CtxMax:     ev.CtxMax,
 			TokensUsed: ev.TokensUsed,
 		}
 
@@ -200,9 +237,8 @@ func generateTaskID() string {
 func (a *Application) runDemo() error {
 	go a.fakeAgentLoop()
 
-	tui := ui.New(a.EventCh, nil, Version, a.WorkDir, a.RepoURL, "demo-model")
-	// Note: tea.WithMouseCellMotion() is intentionally not used to allow
-	// terminal mouse selection and copy functionality
+	tui := ui.New(a.EventCh, nil, Version, a.WorkDir, a.RepoURL, "demo-model", a.Config.Context.MaxTokens)
+	// Mouse support disabled to allow free text selection.
 	p := tea.NewProgram(tui, tea.WithAltScreen())
 	_, err := p.Run()
 	return err

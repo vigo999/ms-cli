@@ -46,23 +46,24 @@ type Message struct {
 type EventType string
 
 const (
-	TaskUpdated   EventType = "TaskUpdated"
-	CmdStarted    EventType = "CmdStarted"
-	CmdOutput     EventType = "CmdOutput"
-	CmdFinished   EventType = "CmdFinished"
-	AnalysisReady EventType = "AnalysisReady"
-	AgentReply    EventType = "AgentReply"
-	AgentThinking EventType = "AgentThinking"
-	TokenUpdate   EventType = "TokenUpdate"
-	ToolRead      EventType = "ToolRead"
-	ToolGrep      EventType = "ToolGrep"
-	ToolGlob      EventType = "ToolGlob"
-	ToolEdit      EventType = "ToolEdit"
-	ToolWrite     EventType = "ToolWrite"
-	ToolError     EventType = "ToolError"
-	ClearScreen   EventType = "ClearScreen"
-	ModelUpdate   EventType = "ModelUpdate"
-	Done          EventType = "Done"
+	TaskUpdated    EventType = "TaskUpdated"
+	CmdStarted     EventType = "CmdStarted"
+	CmdOutput      EventType = "CmdOutput"
+	CmdFinished    EventType = "CmdFinished"
+	AnalysisReady  EventType = "AnalysisReady"
+	AgentReply     EventType = "AgentReply"
+	AgentThinking  EventType = "AgentThinking"
+	TokenUpdate    EventType = "TokenUpdate"
+	ToolRead       EventType = "ToolRead"
+	ToolGrep       EventType = "ToolGrep"
+	ToolGlob       EventType = "ToolGlob"
+	ToolEdit       EventType = "ToolEdit"
+	ToolWrite      EventType = "ToolWrite"
+	ToolError      EventType = "ToolError"
+	ClearScreen    EventType = "ClearScreen"
+	ModelUpdate    EventType = "ModelUpdate"
+	MouseModeToggle EventType = "MouseModeToggle"
+	Done           EventType = "Done"
 )
 
 // Event is sent from the agent loop to the TUI.
@@ -74,7 +75,17 @@ type Event struct {
 	ToolName   string
 	Summary    string
 	CtxUsed    int
+	CtxMax     int
 	TokensUsed int
+}
+
+// TaskStats tracks execution statistics for the current task.
+type TaskStats struct {
+	Commands    int // shell commands executed
+	FilesRead   int // files read
+	FilesEdited int // files edited/written
+	Searches    int // grep/glob operations
+	Errors      int // errors encountered
 }
 
 // State is the central UI state.
@@ -87,22 +98,31 @@ type State struct {
 	ShowTaskSelector bool
 	WorkDir          string
 	RepoURL          string
+	Stats            TaskStats // current task statistics
+	IsThinking       bool      // whether AI is currently thinking
+	MouseEnabled     bool      // whether mouse mode is enabled (for scrolling)
 }
 
 // NewState returns an initial empty state.
-func NewState(version, workDir, repoURL, modelName string) State {
+func NewState(version, workDir, repoURL, modelName string, ctxMax int) State {
 	if modelName == "" {
 		modelName = "unknown"
 	}
+	if ctxMax == 0 {
+		ctxMax = 128000 // Default for models like gpt-4o
+	}
 	return State{
-		Version: version,
-		Tasks:   []TaskInfo{},
+		Version:      version,
+		Tasks:        []TaskInfo{},
 		Model: ModelInfo{
 			Name:   modelName,
-			CtxMax: 128000,
+			CtxMax: ctxMax,
 		},
-		WorkDir: workDir,
-		RepoURL: repoURL,
+		WorkDir:      workDir,
+		RepoURL:      repoURL,
+		Stats:        TaskStats{},
+		IsThinking:   false,
+		MouseEnabled: true, // default to enabled for scroll wheel
 	}
 }
 
@@ -117,6 +137,9 @@ func (s State) WithTask(t TaskInfo) State {
 		ShowTaskSelector: s.ShowTaskSelector,
 		WorkDir:          s.WorkDir,
 		RepoURL:          s.RepoURL,
+		Stats:            s.Stats,
+		IsThinking:       s.IsThinking,
+		MouseEnabled:     s.MouseEnabled,
 	}
 }
 
@@ -131,6 +154,9 @@ func (s State) WithMessage(m Message) State {
 		ShowTaskSelector: s.ShowTaskSelector,
 		WorkDir:          s.WorkDir,
 		RepoURL:          s.RepoURL,
+		Stats:            s.Stats,
+		IsThinking:       s.IsThinking,
+		MouseEnabled:     s.MouseEnabled,
 	}
 }
 
@@ -145,5 +171,76 @@ func (s State) WithModel(m ModelInfo) State {
 		ShowTaskSelector: s.ShowTaskSelector,
 		WorkDir:          s.WorkDir,
 		RepoURL:          s.RepoURL,
+		Stats:            s.Stats,
+		IsThinking:       s.IsThinking,
+		MouseEnabled:     s.MouseEnabled,
+	}
+}
+
+// WithStats returns a new State with updated stats.
+func (s State) WithStats(stats TaskStats) State {
+	return State{
+		Version:          s.Version,
+		Tasks:            s.Tasks,
+		ActiveTask:       s.ActiveTask,
+		Model:            s.Model,
+		Messages:         s.Messages,
+		ShowTaskSelector: s.ShowTaskSelector,
+		WorkDir:          s.WorkDir,
+		RepoURL:          s.RepoURL,
+		Stats:            stats,
+		IsThinking:       s.IsThinking,
+		MouseEnabled:     s.MouseEnabled,
+	}
+}
+
+// WithThinking returns a new State with updated thinking status.
+func (s State) WithThinking(thinking bool) State {
+	return State{
+		Version:          s.Version,
+		Tasks:            s.Tasks,
+		ActiveTask:       s.ActiveTask,
+		Model:            s.Model,
+		Messages:         s.Messages,
+		ShowTaskSelector: s.ShowTaskSelector,
+		WorkDir:          s.WorkDir,
+		RepoURL:          s.RepoURL,
+		Stats:            s.Stats,
+		IsThinking:       thinking,
+		MouseEnabled:     s.MouseEnabled,
+	}
+}
+
+// ResetStats returns a new State with reset stats.
+func (s State) ResetStats() State {
+	return State{
+		Version:          s.Version,
+		Tasks:            s.Tasks,
+		ActiveTask:       s.ActiveTask,
+		Model:            s.Model,
+		Messages:         s.Messages,
+		ShowTaskSelector: s.ShowTaskSelector,
+		WorkDir:          s.WorkDir,
+		RepoURL:          s.RepoURL,
+		Stats:            TaskStats{},
+		IsThinking:       s.IsThinking,
+		MouseEnabled:     s.MouseEnabled,
+	}
+}
+
+// WithMouseEnabled returns a new State with updated mouse mode.
+func (s State) WithMouseEnabled(enabled bool) State {
+	return State{
+		Version:          s.Version,
+		Tasks:            s.Tasks,
+		ActiveTask:       s.ActiveTask,
+		Model:            s.Model,
+		Messages:         s.Messages,
+		ShowTaskSelector: s.ShowTaskSelector,
+		WorkDir:          s.WorkDir,
+		RepoURL:          s.RepoURL,
+		Stats:            s.Stats,
+		IsThinking:       s.IsThinking,
+		MouseEnabled:     enabled,
 	}
 }

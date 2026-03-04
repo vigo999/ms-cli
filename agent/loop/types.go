@@ -21,6 +21,7 @@ type Event struct {
 	ToolName   string
 	Summary    string
 	CtxUsed    int
+	CtxMax     int
 	TokensUsed int
 	Usage      llm.Usage
 	Timestamp  time.Time

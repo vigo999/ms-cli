@@ -27,7 +27,7 @@ type App struct {
 	state        model.State
 	viewport     components.Viewport
 	input        components.TextInput
-	spinner      components.Spinner
+	thinking     components.ThinkingSpinner
 	width        int
 	height       int
 	eventCh      <-chan model.Event
@@ -37,13 +37,13 @@ type App struct {
 
 // New creates a new App driven by the given event channel.
 // userCh may be nil (demo mode) — user input won't be forwarded.
-func New(ch <-chan model.Event, userCh chan<- string, version, workDir, repoURL, modelName string) App {
+func New(ch <-chan model.Event, userCh chan<- string, version, workDir, repoURL, modelName string, ctxMax int) App {
 	return App{
-		state:   model.NewState(version, workDir, repoURL, modelName),
-		input:   components.NewTextInput(),
-		spinner: components.NewSpinner(),
-		eventCh: ch,
-		userCh:  userCh,
+		state:    model.NewState(version, workDir, repoURL, modelName, ctxMax),
+		input:    components.NewTextInput(),
+		thinking: components.NewThinkingSpinner(),
+		eventCh:  ch,
+		userCh:   userCh,
 	}
 }
 
@@ -57,7 +57,7 @@ func (a App) waitForEvent() tea.Msg {
 
 func (a App) Init() tea.Cmd {
 	return tea.Batch(
-		a.spinner.Model.Tick,
+		a.thinking.Tick(),
 		a.waitForEvent,
 	)
 }
@@ -99,10 +99,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	default:
 		var cmd tea.Cmd
-		a.spinner, cmd = a.spinner.Update(msg)
+		a.thinking, cmd = a.thinking.Update(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		// 重新渲染 viewport 以显示动画
+		a.updateViewport()
 	}
 
 	return a, tea.Batch(cmds...)
@@ -152,6 +154,9 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if val == "" {
 			return a, nil
 		}
+		// Reset stats for new task
+		a.state = a.state.ResetStats()
+		a.state = a.state.WithThinking(false)
 		a.state = a.state.WithMessage(model.Message{Kind: model.MsgUser, Content: val})
 		a.input = a.input.Reset()
 		a.viewport = a.viewport.SetSize(a.width-4, a.chatHeight())
@@ -188,12 +193,20 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	switch ev.Type {
 	case model.AgentThinking:
+		// Start thinking - set flag and ensure we have a thinking message
+		a.state = a.state.WithThinking(true)
 		a.state = a.state.WithMessage(model.Message{Kind: model.MsgThinking})
 
 	case model.AgentReply:
+		// Stop thinking and show result
+		a.state = a.state.WithThinking(false)
 		a.state = a.replaceThinking(model.Message{Kind: model.MsgAgent, Content: ev.Message})
 
 	case model.CmdStarted:
+		// Update command count
+		stats := a.state.Stats
+		stats.Commands++
+		a.state = a.state.WithStats(stats)
 		// Shell tool message already contains the full output with $ prefix
 		a.state = a.state.WithMessage(model.Message{
 			Kind:     model.MsgTool,
@@ -209,6 +222,10 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		// output already in the tool block
 
 	case model.ToolRead:
+		// Update files read count
+		stats := a.state.Stats
+		stats.FilesRead++
+		a.state = a.state.WithStats(stats)
 		a.state = a.state.WithMessage(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Read",
@@ -218,6 +235,10 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		})
 
 	case model.ToolGrep:
+		// Update search count
+		stats := a.state.Stats
+		stats.Searches++
+		a.state = a.state.WithStats(stats)
 		a.state = a.state.WithMessage(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Grep",
@@ -227,6 +248,10 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		})
 
 	case model.ToolGlob:
+		// Update search count
+		stats := a.state.Stats
+		stats.Searches++
+		a.state = a.state.WithStats(stats)
 		a.state = a.state.WithMessage(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Glob",
@@ -236,6 +261,10 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		})
 
 	case model.ToolEdit:
+		// Update files edited count
+		stats := a.state.Stats
+		stats.FilesEdited++
+		a.state = a.state.WithStats(stats)
 		a.state = a.state.WithMessage(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Edit",
@@ -244,6 +273,10 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		})
 
 	case model.ToolWrite:
+		// Update files edited count
+		stats := a.state.Stats
+		stats.FilesEdited++
+		a.state = a.state.WithStats(stats)
 		a.state = a.state.WithMessage(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Write",
@@ -252,6 +285,10 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		})
 
 	case model.ToolError:
+		// Update error count
+		stats := a.state.Stats
+		stats.Errors++
+		a.state = a.state.WithStats(stats)
 		a.state = a.state.WithMessage(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: ev.ToolName,
@@ -265,6 +302,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	case model.TokenUpdate:
 		mi := a.state.Model
 		mi.CtxUsed = ev.CtxUsed
+		mi.CtxMax = ev.CtxMax
 		mi.TokensUsed = ev.TokensUsed
 		a.state = a.state.WithModel(mi)
 
@@ -300,11 +338,13 @@ func (a App) replaceThinking(m model.Message) model.State {
 	}
 	msgs = append(msgs, m)
 	return model.State{
-		Version:  a.state.Version,
-		Model:    a.state.Model,
-		Messages: msgs,
-		WorkDir:  a.state.WorkDir,
-		RepoURL:  a.state.RepoURL,
+		Version:    a.state.Version,
+		Model:      a.state.Model,
+		Messages:   msgs,
+		WorkDir:    a.state.WorkDir,
+		RepoURL:    a.state.RepoURL,
+		Stats:      a.state.Stats,
+		IsThinking: a.state.IsThinking,
 	}
 }
 
@@ -325,16 +365,18 @@ func (a App) appendToLastTool(line string) model.State {
 	}
 
 	return model.State{
-		Version:  a.state.Version,
-		Model:    a.state.Model,
-		Messages: msgs,
-		WorkDir:  a.state.WorkDir,
-		RepoURL:  a.state.RepoURL,
+		Version:    a.state.Version,
+		Model:      a.state.Model,
+		Messages:   msgs,
+		WorkDir:    a.state.WorkDir,
+		RepoURL:    a.state.RepoURL,
+		Stats:      a.state.Stats,
+		IsThinking: a.state.IsThinking,
 	}
 }
 
 func (a *App) updateViewport() {
-	content := panels.RenderMessages(a.state.Messages, a.spinner.View())
+	content := panels.RenderMessages(a.state, a.thinking.View())
 	a.viewport = a.viewport.SetContent(content)
 }
 

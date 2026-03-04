@@ -104,7 +104,7 @@ func DefaultConfig() *Config {
 			Model:       "gpt-4o-mini",
 			Temperature: 0.7,
 			MaxTokens:   4096,
-			TimeoutSec:  60,
+			TimeoutSec:  180, // 3 minutes for longer conversations
 			Headers:     make(map[string]string),
 		},
 		Budget: BudgetConfig{

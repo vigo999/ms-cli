@@ -17,7 +17,7 @@ import (
 
 const (
 	defaultEndpoint = "https://api.openai.com/v1"
-	defaultTimeout  = 60 * time.Second
+	defaultTimeout  = 180 * time.Second // 3 minutes for longer conversations
 )
 
 // Config holds the OpenAI client configuration.
@@ -86,7 +86,10 @@ func (c *Client) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm
 
 	resp, err := c.doRequest(ctx, body)
 	if err != nil {
-		return nil, err
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("request timeout: the operation took too long (>%v). Try reducing context size or increasing timeout", c.httpClient.Timeout)
+		}
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -96,6 +99,9 @@ func (c *Client) Complete(ctx context.Context, req *llm.CompletionRequest) (*llm
 
 	var result chatCompletionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("response timeout: server took too long to respond. Try with a shorter conversation or increase timeout")
+		}
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 

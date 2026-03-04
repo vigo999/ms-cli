@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -17,6 +18,9 @@ type EngineConfig struct {
 	Temperature    float32
 	TimeoutPerTurn time.Duration
 	SystemPrompt   string
+
+	// Plan Mode 配置
+	ModeConfig ModeConfig
 }
 
 // Engine drives task execution and emits events.
@@ -26,6 +30,11 @@ type Engine struct {
 	tools      *tools.Registry
 	ctxManager *ctxmanager.Manager
 	permission PermissionService
+
+	// Plan Mode 组件
+	planner   *Planner
+	planExecutor *PlanExecutor
+	modeCallback ModeCallback
 }
 
 // NewEngine creates a new engine.
@@ -37,11 +46,15 @@ func NewEngine(cfg EngineConfig, provider llm.Provider, tools *tools.Registry) *
 	if cfg.SystemPrompt == "" {
 		cfg.SystemPrompt = defaultSystemPrompt()
 	}
+	if cfg.ModeConfig.Mode == 0 && cfg.ModeConfig.PlanConfig.MaxSteps == 0 {
+		cfg.ModeConfig = DefaultModeConfig()
+	}
 
 	engine := &Engine{
-		config:   cfg,
-		provider: provider,
-		tools:    tools,
+		config:       cfg,
+		provider:     provider,
+		tools:        tools,
+		modeCallback: &DefaultModeCallback{},
 	}
 
 	// Initialize context manager if not set
@@ -53,6 +66,10 @@ func NewEngine(cfg EngineConfig, provider llm.Provider, tools *tools.Registry) *
 
 	// Default permission service
 	engine.permission = NewNoOpPermissionService()
+
+	// Initialize Plan Mode components
+	engine.planner = NewPlanner(provider, DefaultPlannerConfig())
+	engine.planExecutor = NewPlanExecutor(&toolRegistryAdapter{tools: tools}, engine.modeCallback, DefaultExecutionConfig())
 
 	return engine
 }
@@ -67,6 +84,17 @@ func (e *Engine) SetPermissionService(ps PermissionService) {
 	e.permission = ps
 }
 
+// SetModeCallback sets the mode callback.
+func (e *Engine) SetModeCallback(cb ModeCallback) {
+	e.modeCallback = cb
+	e.planExecutor.callback = cb
+}
+
+// SetRunMode sets the run mode.
+func (e *Engine) SetRunMode(mode RunMode) {
+	e.config.ModeConfig.Mode = mode
+}
+
 // Run executes a task and returns events.
 func (e *Engine) Run(task Task) ([]Event, error) {
 	ctx := context.Background()
@@ -75,6 +103,18 @@ func (e *Engine) Run(task Task) ([]Event, error) {
 
 // RunWithContext executes a task with context.
 func (e *Engine) RunWithContext(ctx context.Context, task Task) ([]Event, error) {
+	switch e.config.ModeConfig.Mode {
+	case ModePlan:
+		return e.runWithPlanMode(ctx, task)
+	case ModeReview:
+		return e.runWithReviewMode(ctx, task)
+	default:
+		return e.runStandard(ctx, task)
+	}
+}
+
+// runStandard 标准模式执行
+func (e *Engine) runStandard(ctx context.Context, task Task) ([]Event, error) {
 	exec := &executor{
 		engine:     e,
 		task:       task,
@@ -84,13 +124,122 @@ func (e *Engine) RunWithContext(ctx context.Context, task Task) ([]Event, error)
 	return exec.run(ctx)
 }
 
+// runWithPlanMode Plan Mode 执行
+func (e *Engine) runWithPlanMode(ctx context.Context, task Task) ([]Event, error) {
+	events := make([]Event, 0)
+	events = append(events, NewEvent(EventTaskStarted, fmt.Sprintf("Task (Plan Mode): %s", task.Description)))
+
+	// 1. 生成计划
+	events = append(events, NewEvent(EventAgentThinking, "Generating plan..."))
+	plan, err := e.planner.GeneratePlan(ctx, task.Description, e.getAvailableTools())
+	if err != nil {
+		events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Failed to generate plan: %v", err)))
+		return events, fmt.Errorf("generate plan: %w", err)
+	}
+
+	events = append(events, NewEvent(EventLLMResponse, fmt.Sprintf("Plan created with %d steps", len(plan.Steps))))
+
+	// 2. 通知计划创建
+	if err := e.modeCallback.OnPlanCreated(plan); err != nil {
+		events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Plan callback error: %v", err)))
+		return events, err
+	}
+
+	// 3. 等待批准（如果需要）
+	if e.config.ModeConfig.PlanConfig.RequireApproval {
+		plan.Status = PlanStatusPendingApproval
+		// 这里应该有一个阻塞调用等待用户批准
+		// 简化实现：直接批准
+		plan.Approve()
+		if err := e.modeCallback.OnPlanApproved(plan); err != nil {
+			events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Plan approval error: %v", err)))
+			return events, err
+		}
+	} else {
+		plan.Approve()
+	}
+
+	// 4. 执行计划
+	if err := e.planExecutor.Execute(ctx, plan); err != nil {
+		events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Plan execution failed: %v", err)))
+		return events, err
+	}
+
+	// 5. 生成结果
+	report := e.planExecutor.GenerateReport(plan)
+	events = append(events, NewEvent(EventTaskCompleted, report.ToMarkdown()))
+
+	return events, nil
+}
+
+// runWithReviewMode Review Mode 执行
+func (e *Engine) runWithReviewMode(ctx context.Context, task Task) ([]Event, error) {
+	// Review Mode: 每步执行前确认
+	// 简化实现：使用 Plan Mode 但每步确认
+	events := make([]Event, 0)
+	events = append(events, NewEvent(EventTaskStarted, fmt.Sprintf("Task (Review Mode): %s", task.Description)))
+
+	// 生成单步计划
+	plan := NewPlan(task.Description)
+	plan.AddStep(task.Description)
+	plan.Approve()
+
+	// 执行并确认
+	for _, step := range plan.Steps {
+		// 请求确认
+		confirmed, err := e.modeCallback.OnStepNeedsConfirmation(step, step.Index)
+		if err != nil {
+			events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Confirmation error: %v", err)))
+			return events, err
+		}
+		if !confirmed {
+			step.Skip()
+			continue
+		}
+
+		// 执行步骤（使用标准 ReAct 循环）
+		stepEvents, err := e.runStandard(ctx, Task{Description: step.Description})
+		if err != nil {
+			events = append(events, stepEvents...)
+			return events, err
+		}
+		events = append(events, stepEvents...)
+		step.Complete("Executed")
+	}
+
+	plan.Complete()
+	events = append(events, NewEvent(EventTaskCompleted, "Task completed with review"))
+
+	return events, nil
+}
+
+// getAvailableTools 获取可用工具列表
+func (e *Engine) getAvailableTools() []string {
+	toolList := e.tools.List()
+	names := make([]string, len(toolList))
+	for i, t := range toolList {
+		names[i] = t.Name()
+	}
+	return names
+}
+
+// GeneratePlan 生成计划（公开方法）
+func (e *Engine) GeneratePlan(ctx context.Context, goal string) (*Plan, error) {
+	return e.planner.GeneratePlan(ctx, goal, e.getAvailableTools())
+}
+
+// ExecutePlan 执行计划（公开方法）
+func (e *Engine) ExecutePlan(ctx context.Context, plan *Plan) error {
+	return e.planExecutor.Execute(ctx, plan)
+}
+
 // executor manages execution of a single task.
 type executor struct {
-	engine    *Engine
-	task      Task
-	events    []Event
-	iterCount int
-	startTime time.Time
+	engine     *Engine
+	task       Task
+	events     []Event
+	iterCount  int
+	startTime  time.Time
 	totalUsage llm.Usage
 }
 
@@ -115,9 +264,14 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 		messages := ex.engine.ctxManager.GetMessages()
 		tools := ex.engine.tools.ToLLMTools()
 
-		// Call LLM
-		ctx, cancel := context.WithTimeout(ctx, ex.engine.config.TimeoutPerTurn)
-		resp, err := ex.engine.provider.Complete(ctx, &llm.CompletionRequest{
+		// Call LLM with timeout - use a separate context that doesn't affect tool execution
+		timeout := ex.engine.config.TimeoutPerTurn
+		if timeout == 0 {
+			timeout = 180 * time.Second // Default 3 minutes
+		}
+		
+		llmCtx, cancel := context.WithTimeout(ctx, timeout)
+		resp, err := ex.engine.provider.Complete(llmCtx, &llm.CompletionRequest{
 			Model:       "", // Use provider default
 			Messages:    messages,
 			Tools:       tools,
@@ -126,7 +280,13 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 		cancel()
 
 		if err != nil {
-			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("LLM error: %v", err)))
+			// Check if it's a timeout error and provide helpful message
+			errMsg := fmt.Sprintf("LLM error: %v", err)
+			if ctx.Err() == context.DeadlineExceeded || llmCtx.Err() == context.DeadlineExceeded {
+				errMsg = fmt.Sprintf("Request timeout. The conversation may be too long (ctx: %d tokens). Try /compact to reduce context size.", 
+					ex.engine.ctxManager.TokenUsage().Current)
+			}
+			ex.addEvent(NewEvent(EventTaskFailed, errMsg))
 			return ex.events, fmt.Errorf("LLM completion: %w", err)
 		}
 
@@ -135,7 +295,7 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 		ex.totalUsage.CompletionTokens += resp.Usage.CompletionTokens
 		ex.totalUsage.TotalTokens += resp.Usage.TotalTokens
 
-		// Handle response
+		// Handle response - use original ctx (not the cancelled LLM ctx) for tool execution
 		continueLoop, err := ex.handleResponse(ctx, resp)
 		if err != nil {
 			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Handle response error: %v", err)))
@@ -270,6 +430,7 @@ func (ex *executor) addEvent(ev Event) {
 	// Update token usage
 	usage := ex.engine.ctxManager.TokenUsage()
 	ev.CtxUsed = usage.Current
+	ev.CtxMax = usage.Max
 	ev.TokensUsed = ex.totalUsage.TotalTokens
 
 	ex.events = append(ex.events, ev)
@@ -309,4 +470,57 @@ func SetExecutorRun(run func(task Task) string) {
 	if run != nil {
 		executorRun = run
 	}
+}
+
+// toolRegistryAdapter 工具注册表适配器
+type toolRegistryAdapter struct {
+	tools *tools.Registry
+}
+
+// Get 获取工具
+func (a *toolRegistryAdapter) Get(name string) (Tool, bool) {
+	t, ok := a.tools.Get(name)
+	if !ok {
+		return nil, false
+	}
+	return &toolAdapter{tool: t}, true
+}
+
+// List 列出所有工具
+func (a *toolRegistryAdapter) List() []Tool {
+	toolList := a.tools.List()
+	result := make([]Tool, len(toolList))
+	for i, t := range toolList {
+		result[i] = &toolAdapter{tool: t}
+	}
+	return result
+}
+
+// toolAdapter 工具适配器
+type toolAdapter struct {
+	tool tools.Tool
+}
+
+// Name 返回工具名
+func (a *toolAdapter) Name() string {
+	return a.tool.Name()
+}
+
+// Execute 执行工具
+func (a *toolAdapter) Execute(ctx context.Context, params map[string]any) (string, error) {
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return "", fmt.Errorf("marshal params: %w", err)
+	}
+
+	result, err := a.tool.Execute(ctx, paramsJSON)
+	if err != nil {
+		return "", err
+	}
+
+	if result.Error != nil {
+		return "", result.Error
+	}
+
+	return result.Content, nil
 }

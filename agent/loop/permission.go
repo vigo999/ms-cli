@@ -3,8 +3,10 @@ package loop
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/vigo999/ms-cli/configs"
 )
@@ -70,20 +72,47 @@ type PermissionService interface {
 	// Check checks the current permission level without triggering interaction.
 	Check(tool, action string) PermissionLevel
 
+	// CheckCommand checks permission for a specific command.
+	CheckCommand(command string) PermissionLevel
+
+	// CheckPath checks permission for a specific path.
+	CheckPath(path string) PermissionLevel
+
 	// Grant grants permission for a tool.
 	Grant(tool string, level PermissionLevel)
 
+	// GrantCommand grants permission for a specific command.
+	GrantCommand(command string, level PermissionLevel)
+
+	// GrantPath grants permission for a specific path pattern.
+	GrantPath(pattern string, level PermissionLevel)
+
 	// Revoke revokes permission for a tool.
 	Revoke(tool string)
+
+	// RevokeCommand revokes permission for a specific command.
+	RevokeCommand(command string)
+
+	// RevokePath revokes permission for a specific path pattern.
+	RevokePath(pattern string)
 }
 
 // DefaultPermissionService is the default permission service implementation.
 type DefaultPermissionService struct {
-	mu       sync.RWMutex
-	policies map[string]PermissionLevel
-	default_ PermissionLevel
-	skipAsk  bool
-	ui       PermissionUI
+	mu              sync.RWMutex
+	policies        map[string]PermissionLevel
+	commandPolicies map[string]PermissionLevel
+	pathPatterns    []PathPermission
+	default_        PermissionLevel
+	skipAsk         bool
+	ui              PermissionUI
+	store           PermissionStore
+}
+
+// PathPermission 路径权限
+type PathPermission struct {
+	Pattern string
+	Level   PermissionLevel
 }
 
 // PermissionUI is the interface for permission UI interaction.
@@ -96,9 +125,11 @@ type PermissionUI interface {
 // NewDefaultPermissionService creates a new permission service.
 func NewDefaultPermissionService(cfg configs.PermissionsConfig) *DefaultPermissionService {
 	svc := &DefaultPermissionService{
-		policies: make(map[string]PermissionLevel),
-		default_: ParsePermissionLevel(cfg.DefaultLevel),
-		skipAsk:  cfg.SkipRequests,
+		policies:        make(map[string]PermissionLevel),
+		commandPolicies: make(map[string]PermissionLevel),
+		pathPatterns:    make([]PathPermission, 0),
+		default_:        ParsePermissionLevel(cfg.DefaultLevel),
+		skipAsk:         cfg.SkipRequests,
 	}
 
 	// Load tool policies
@@ -111,6 +142,11 @@ func NewDefaultPermissionService(cfg configs.PermissionsConfig) *DefaultPermissi
 		svc.policies[tool] = PermissionAllowAlways
 	}
 
+	// Load blocked tools as deny
+	for _, tool := range cfg.BlockedTools {
+		svc.policies[tool] = PermissionDeny
+	}
+
 	return svc
 }
 
@@ -119,9 +155,31 @@ func (s *DefaultPermissionService) SetUI(ui PermissionUI) {
 	s.ui = ui
 }
 
+// SetStore sets the permission store.
+func (s *DefaultPermissionService) SetStore(store PermissionStore) {
+	s.store = store
+}
+
 // Request requests permission.
 func (s *DefaultPermissionService) Request(ctx context.Context, tool, action, path string) (bool, error) {
+	// 1. 检查工具级别权限
 	level := s.Check(tool, action)
+
+	// 2. 检查命令级别权限（如果是 shell 工具）
+	if tool == "shell" && action != "" {
+		cmdLevel := s.CheckCommand(action)
+		if cmdLevel < level {
+			level = cmdLevel
+		}
+	}
+
+	// 3. 检查路径级别权限
+	if path != "" {
+		pathLevel := s.CheckPath(path)
+		if pathLevel < level {
+			level = pathLevel
+		}
+	}
 
 	switch level {
 	case PermissionDeny:
@@ -149,6 +207,16 @@ func (s *DefaultPermissionService) Request(ctx context.Context, tool, action, pa
 
 			if granted && remember {
 				s.Grant(tool, PermissionAllowSession)
+				// 持久化决策
+				if s.store != nil {
+					s.store.SaveDecision(PermissionDecision{
+						Tool:      tool,
+						Action:    action,
+						Path:      path,
+						Level:     PermissionAllowSession,
+						Timestamp: time.Now(),
+					})
+				}
 			}
 
 			return granted, nil
@@ -188,6 +256,42 @@ func (s *DefaultPermissionService) Check(tool, action string) PermissionLevel {
 	return s.default_
 }
 
+// CheckCommand checks permission for a specific command.
+func (s *DefaultPermissionService) CheckCommand(command string) PermissionLevel {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// 解析命令名
+	cmd := extractCommandName(command)
+
+	// 检查是否有该命令的特定策略
+	if level, ok := s.commandPolicies[cmd]; ok {
+		return level
+	}
+
+	// 检查是否是危险命令
+	if IsDangerousCommand(command) {
+		return maxPermission(s.default_, PermissionAsk)
+	}
+
+	return s.default_
+}
+
+// CheckPath checks permission for a specific path.
+func (s *DefaultPermissionService) CheckPath(path string) PermissionLevel {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// 检查路径模式匹配
+	for _, pp := range s.pathPatterns {
+		if matched, _ := filepath.Match(pp.Pattern, path); matched {
+			return pp.Level
+		}
+	}
+
+	return PermissionAllowAlways
+}
+
 // Grant grants permission.
 func (s *DefaultPermissionService) Grant(tool string, level PermissionLevel) {
 	s.mu.Lock()
@@ -196,12 +300,63 @@ func (s *DefaultPermissionService) Grant(tool string, level PermissionLevel) {
 	s.policies[tool] = level
 }
 
+// GrantCommand grants permission for a specific command.
+func (s *DefaultPermissionService) GrantCommand(command string, level PermissionLevel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cmd := extractCommandName(command)
+	s.commandPolicies[cmd] = level
+}
+
+// GrantPath grants permission for a specific path pattern.
+func (s *DefaultPermissionService) GrantPath(pattern string, level PermissionLevel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 查找是否已存在
+	for i, pp := range s.pathPatterns {
+		if pp.Pattern == pattern {
+			s.pathPatterns[i].Level = level
+			return
+		}
+	}
+
+	// 添加新的
+	s.pathPatterns = append(s.pathPatterns, PathPermission{
+		Pattern: pattern,
+		Level:   level,
+	})
+}
+
 // Revoke revokes permission.
 func (s *DefaultPermissionService) Revoke(tool string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	delete(s.policies, tool)
+}
+
+// RevokeCommand revokes permission for a specific command.
+func (s *DefaultPermissionService) RevokeCommand(command string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cmd := extractCommandName(command)
+	delete(s.commandPolicies, cmd)
+}
+
+// RevokePath revokes permission for a specific path pattern.
+func (s *DefaultPermissionService) RevokePath(pattern string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i, pp := range s.pathPatterns {
+		if pp.Pattern == pattern {
+			s.pathPatterns = append(s.pathPatterns[:i], s.pathPatterns[i+1:]...)
+			return
+		}
+	}
 }
 
 // GetPolicies returns a copy of all policies.
@@ -216,11 +371,47 @@ func (s *DefaultPermissionService) GetPolicies() map[string]PermissionLevel {
 	return result
 }
 
+// GetCommandPolicies returns command policies.
+func (s *DefaultPermissionService) GetCommandPolicies() map[string]PermissionLevel {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string]PermissionLevel, len(s.commandPolicies))
+	for k, v := range s.commandPolicies {
+		result[k] = v
+	}
+	return result
+}
+
+// GetPathPolicies returns path policies.
+func (s *DefaultPermissionService) GetPathPolicies() []PathPermission {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]PathPermission, len(s.pathPatterns))
+	copy(result, s.pathPatterns)
+	return result
+}
+
 func maxPermission(a, b PermissionLevel) PermissionLevel {
 	if a > b {
 		return a
 	}
 	return b
+}
+
+// extractCommandName 从命令字符串中提取命令名
+func extractCommandName(command string) string {
+	// 去除前导空格
+	command = strings.TrimLeft(command, " \t")
+
+	// 提取第一个词
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return parts[0]
 }
 
 // NoOpPermissionService is a permission service that always allows.
@@ -241,8 +432,46 @@ func (s *NoOpPermissionService) Check(tool, action string) PermissionLevel {
 	return PermissionAllowAlways
 }
 
+// CheckCommand always returns allow always.
+func (s *NoOpPermissionService) CheckCommand(command string) PermissionLevel {
+	return PermissionAllowAlways
+}
+
+// CheckPath always returns allow always.
+func (s *NoOpPermissionService) CheckPath(path string) PermissionLevel {
+	return PermissionAllowAlways
+}
+
 // Grant is a no-op.
 func (s *NoOpPermissionService) Grant(tool string, level PermissionLevel) {}
 
+// GrantCommand is a no-op.
+func (s *NoOpPermissionService) GrantCommand(command string, level PermissionLevel) {}
+
+// GrantPath is a no-op.
+func (s *NoOpPermissionService) GrantPath(pattern string, level PermissionLevel) {}
+
 // Revoke is a no-op.
 func (s *NoOpPermissionService) Revoke(tool string) {}
+
+// RevokeCommand is a no-op.
+func (s *NoOpPermissionService) RevokeCommand(command string) {}
+
+// RevokePath is a no-op.
+func (s *NoOpPermissionService) RevokePath(pattern string) {}
+
+// PermissionDecision 权限决策记录
+type PermissionDecision struct {
+	Tool      string
+	Action    string
+	Path      string
+	Level     PermissionLevel
+	Timestamp time.Time
+}
+
+// PermissionStore 权限存储接口
+type PermissionStore interface {
+	SaveDecision(decision PermissionDecision) error
+	LoadDecisions() ([]PermissionDecision, error)
+	ClearDecisions() error
+}

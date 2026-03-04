@@ -68,8 +68,12 @@ var (
 )
 
 // RenderMessages converts messages into styled text for the viewport.
-func RenderMessages(messages []model.Message, spinnerView string) string {
+// stats is used to show summary when thinking is done.
+func RenderMessages(state model.State, spinnerView string) string {
 	var parts []string
+	messages := state.Messages
+	stats := state.Stats
+	isThinking := state.IsThinking
 
 	for _, m := range messages {
 		switch m.Kind {
@@ -78,7 +82,13 @@ func RenderMessages(messages []model.Message, spinnerView string) string {
 		case model.MsgAgent:
 			parts = append(parts, renderAgentMsg(m.Content))
 		case model.MsgThinking:
-			parts = append(parts, renderThinking(spinnerView))
+			if isThinking {
+				// Show animated thinking indicator
+				parts = append(parts, renderThinking(spinnerView))
+			} else {
+				// Show "Done" with summary
+				parts = append(parts, renderDone(stats))
+			}
 		case model.MsgTool:
 			parts = append(parts, renderTool(m))
 		}
@@ -100,8 +110,44 @@ func renderAgentMsg(content string) string {
 	return strings.Join(styled, "\n")
 }
 
-func renderThinking(spinnerView string) string {
-	return fmt.Sprintf("  %s %s", spinnerView, thinkingStyle.Render("Thinking..."))
+func renderThinking(thinkingView string) string {
+	// Animated thinking indicator with Braille spinner
+	// thinkingView already contains the spinner and text from ThinkingSpinner.View()
+	return "  " + thinkingView
+}
+
+// renderDone shows completed task summary without animation
+func renderDone(stats model.TaskStats) string {
+	var parts []string
+	
+	// Always show Done
+	doneStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green
+	parts = append(parts, doneStyle.Render("✓ Done"))
+	
+	// Show simple execution summary if there's anything to report
+	summaryParts := []string{}
+	if stats.Commands > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("%d commands", stats.Commands))
+	}
+	if stats.FilesRead > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("%d files read", stats.FilesRead))
+	}
+	if stats.FilesEdited > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("%d files modified", stats.FilesEdited))
+	}
+	if stats.Searches > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("%d searches", stats.Searches))
+	}
+	if stats.Errors > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("%d errors", stats.Errors))
+	}
+	
+	if len(summaryParts) > 0 {
+		summaryStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+		parts = append(parts, summaryStyle.Render("("+strings.Join(summaryParts, ", ")+")"))
+	}
+	
+	return "  " + strings.Join(parts, " ")
 }
 
 func renderTool(m model.Message) string {
