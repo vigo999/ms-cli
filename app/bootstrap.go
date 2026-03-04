@@ -13,7 +13,6 @@ import (
 	"github.com/vigo999/ms-cli/executor"
 	"github.com/vigo999/ms-cli/integrations/llm"
 	openai "github.com/vigo999/ms-cli/integrations/llm/openai"
-	openrouter "github.com/vigo999/ms-cli/integrations/llm/openrouter"
 	"github.com/vigo999/ms-cli/tools"
 	"github.com/vigo999/ms-cli/tools/fs"
 	"github.com/vigo999/ms-cli/tools/shell"
@@ -183,7 +182,8 @@ func initProvider(cfg configs.ModelConfig) (llm.Provider, error) {
 			endpoint = "https://openrouter.ai/api/v1"
 		}
 
-		client, err := openrouter.NewClient(openrouter.Config{
+		// Use unified openai provider with OpenRouter settings
+		client, err := openai.NewClient(openai.Config{
 			APIKey:   apiKey,
 			Endpoint: endpoint,
 			Model:    cfg.Model,

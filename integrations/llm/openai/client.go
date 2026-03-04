@@ -1,13 +1,16 @@
 // Package openai provides an OpenAI API compatible provider implementation.
+// Also supports OpenRouter and other OpenAI-compatible APIs.
 package openai
 
 import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +30,10 @@ type Config struct {
 	Model      string
 	Timeout    time.Duration
 	HTTPClient *http.Client
+	// OpenRouter-specific settings
+	SiteURL    string // Optional: for rankings on openrouter.ai
+	SiteName   string // Optional: for rankings on openrouter.ai
+	DisableHTTP2 bool // Optional: disable HTTP/2 for compatibility
 }
 
 // Client implements the llm.Provider interface for OpenAI.
@@ -35,9 +42,14 @@ type Client struct {
 	endpoint   string
 	model      string
 	httpClient *http.Client
+	// OpenRouter-specific
+	siteURL    string
+	siteName   string
+	isOpenRouter bool
 }
 
 // NewClient creates a new OpenAI client.
+// Also supports OpenRouter-compatible endpoints.
 func NewClient(cfg Config) (*Client, error) {
 	apiKey := strings.TrimSpace(cfg.APIKey)
 	if apiKey == "" {
@@ -54,21 +66,63 @@ func NewClient(cfg Config) (*Client, error) {
 		timeout = defaultTimeout
 	}
 
+	// Detect OpenRouter endpoint
+	isOpenRouter := strings.Contains(endpoint, "openrouter.ai")
+
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: timeout}
+		if isOpenRouter || cfg.DisableHTTP2 {
+			// Create a custom transport that disables HTTP/2 for compatibility
+			transport := &http.Transport{
+				TLSClientConfig: &tls.Config{
+					MinVersion: tls.VersionTLS12,
+				},
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				ForceAttemptHTTP2:     false, // Disable HTTP/2
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			}
+			httpClient = &http.Client{
+				Timeout:   timeout,
+				Transport: transport,
+			}
+		} else {
+			httpClient = &http.Client{Timeout: timeout}
+		}
+	}
+
+	// Set defaults for OpenRouter required headers
+	siteURL := cfg.SiteURL
+	if siteURL == "" {
+		siteURL = "https://github.com/vigo999/ms-cli"
+	}
+
+	siteName := cfg.SiteName
+	if siteName == "" {
+		siteName = "ms-cli"
 	}
 
 	return &Client{
-		apiKey:     apiKey,
-		endpoint:   strings.TrimRight(endpoint, "/"),
-		model:      cfg.Model,
-		httpClient: httpClient,
+		apiKey:       apiKey,
+		endpoint:     strings.TrimRight(endpoint, "/"),
+		model:        cfg.Model,
+		httpClient:   httpClient,
+		siteURL:      siteURL,
+		siteName:     siteName,
+		isOpenRouter: isOpenRouter,
 	}, nil
 }
 
 // Name returns the provider name.
 func (c *Client) Name() string {
+	if c.isOpenRouter {
+		return "openrouter"
+	}
 	return "openai"
 }
 
@@ -130,6 +184,18 @@ func (c *Client) CompleteStream(ctx context.Context, req *llm.CompletionRequest)
 
 // AvailableModels returns the list of available models.
 func (c *Client) AvailableModels() []llm.ModelInfo {
+	if c.isOpenRouter {
+		return []llm.ModelInfo{
+			{ID: "openai/gpt-4o", Provider: "openrouter", MaxTokens: 128000},
+			{ID: "openai/gpt-4o-mini", Provider: "openrouter", MaxTokens: 128000},
+			{ID: "anthropic/claude-3.5-sonnet", Provider: "openrouter", MaxTokens: 200000},
+			{ID: "anthropic/claude-3-opus", Provider: "openrouter", MaxTokens: 200000},
+			{ID: "anthropic/claude-3-haiku", Provider: "openrouter", MaxTokens: 200000},
+			{ID: "google/gemini-1.5-pro", Provider: "openrouter", MaxTokens: 2000000},
+			{ID: "meta-llama/llama-3.1-405b-instruct", Provider: "openrouter", MaxTokens: 128000},
+			{ID: "deepseek/deepseek-chat", Provider: "openrouter", MaxTokens: 64000},
+		}
+	}
 	return []llm.ModelInfo{
 		{ID: "gpt-4o", Provider: "openai", MaxTokens: 128000},
 		{ID: "gpt-4o-mini", Provider: "openai", MaxTokens: 128000},
@@ -180,12 +246,42 @@ func (c *Client) doRequest(ctx context.Context, body []byte) (*http.Response, er
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
+	// OpenRouter-specific headers (also beneficial for other compatible APIs)
+	if c.isOpenRouter {
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "ms-cli/0.2.0")
+		req.Header.Set("HTTP-Referer", c.siteURL)
+		req.Header.Set("X-Title", c.siteName)
+	}
+
 	return c.httpClient.Do(req)
 }
 
 func (c *Client) parseError(resp *http.Response) error {
-	body, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	// Read the full body with a limit to prevent memory issues
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024)) // 1MB limit
+	if err != nil {
+		return fmt.Errorf("API error (status %d): failed to read error body: %w", resp.StatusCode, err)
+	}
+
+	bodyStr := string(body)
+	if bodyStr == "" {
+		return fmt.Errorf("API error (status %d): empty response", resp.StatusCode)
+	}
+
+	// Try to parse standard error format
+	var errResp struct {
+		Error struct {
+			Message string `json:"message"`
+			Code    int    `json:"code"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &errResp) == nil && errResp.Error.Message != "" {
+		return fmt.Errorf("API error (status %d, %s): %s", resp.StatusCode, errResp.Error.Type, errResp.Error.Message)
+	}
+
+	return fmt.Errorf("API error (status %d): %s", resp.StatusCode, bodyStr)
 }
 
 func (c *Client) convertMessages(msgs []llm.Message) []message {
