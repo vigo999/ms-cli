@@ -9,6 +9,7 @@ import (
 	"github.com/vigo999/ms-cli/agent/loop"
 	"github.com/vigo999/ms-cli/configs"
 	"github.com/vigo999/ms-cli/tools"
+	"github.com/vigo999/ms-cli/trace"
 	"github.com/vigo999/ms-cli/ui/model"
 )
 
@@ -16,16 +17,17 @@ const Version = "ms-cli v0.2.0"
 
 // Application is the top-level composition container.
 type Application struct {
-	Engine         *loop.Engine
-	EventCh        chan model.Event
-	Demo           bool
-	WorkDir        string
-	RepoURL        string
-	Config         *configs.Config
-	toolRegistry   *tools.Registry
-	ctxManager     *context.Manager
-	permService    loop.PermissionService
-	stateManager   *configs.StateManager
+	Engine       *loop.Engine
+	EventCh      chan model.Event
+	Demo         bool
+	WorkDir      string
+	RepoURL      string
+	Config       *configs.Config
+	toolRegistry *tools.Registry
+	ctxManager   *context.Manager
+	permService  loop.PermissionService
+	stateManager *configs.StateManager
+	traceWriter  trace.Writer
 }
 
 // SetProvider creates a new LLM provider and reinitializes the engine with the new provider.
@@ -65,6 +67,7 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 	newEngine := loop.NewEngine(engineCfg, provider, a.toolRegistry)
 	newEngine.SetContextManager(a.ctxManager)
 	newEngine.SetPermissionService(a.permService)
+	newEngine.SetTraceWriter(a.traceWriter)
 
 	// Replace the engine
 	a.Engine = newEngine

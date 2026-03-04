@@ -85,6 +85,12 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.MaxHistoryRounds == 0 {
 		cfg.MaxHistoryRounds = 10
 	}
+	if cfg.Allocation.SystemPercent == 0 &&
+		cfg.Allocation.HistoryPercent == 0 &&
+		cfg.Allocation.ToolResultPercent == 0 &&
+		cfg.Allocation.ReservePercent == 0 {
+		cfg.Allocation = DefaultBudgetAllocation()
+	}
 
 	// 创建预算管理器
 	budget, _ := NewBudget(cfg.MaxTokens, cfg.Allocation)
@@ -103,8 +109,8 @@ func NewManager(cfg ManagerConfig) *Manager {
 		compactor: compactor,
 		scorer:    NewPriorityScorer(),
 		usage: TokenUsage{
-			Max:      cfg.MaxTokens,
-			Reserved: cfg.ReserveTokens,
+			Max:       cfg.MaxTokens,
+			Reserved:  cfg.ReserveTokens,
 			Available: cfg.MaxTokens - cfg.ReserveTokens,
 		},
 	}
@@ -277,13 +283,13 @@ func (m *Manager) GetStats() map[string]any {
 	defer m.mu.RUnlock()
 
 	return map[string]any{
-		"total_messages":     len(m.messages),
-		"has_system_prompt":  m.system != nil,
-		"token_usage":        m.usage,
-		"max_tokens":         m.config.MaxTokens,
-		"compact_count":      m.stats.CompactCount,
-		"tool_call_count":    m.stats.ToolCallCount,
-		"last_compact_at":    m.stats.LastCompactAt,
+		"total_messages":    len(m.messages),
+		"has_system_prompt": m.system != nil,
+		"token_usage":       m.usage,
+		"max_tokens":        m.config.MaxTokens,
+		"compact_count":     m.stats.CompactCount,
+		"tool_call_count":   m.stats.ToolCallCount,
+		"last_compact_at":   m.stats.LastCompactAt,
 	}
 }
 
@@ -292,12 +298,17 @@ func (m *Manager) GetDetailedStats() map[string]any {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	budgetStats := BudgetStats{}
+	if m.budget != nil {
+		budgetStats = m.budget.GetStats()
+	}
+
 	stats := map[string]any{
 		"messages": map[string]any{
-			"total":         len(m.messages),
-			"user":          m.countByRole("user"),
-			"assistant":     m.countByRole("assistant"),
-			"tool":          m.countByRole("tool"),
+			"total":     len(m.messages),
+			"user":      m.countByRole("user"),
+			"assistant": m.countByRole("assistant"),
+			"tool":      m.countByRole("tool"),
 		},
 		"tokens": map[string]any{
 			"current":   m.usage.Current,
@@ -305,7 +316,7 @@ func (m *Manager) GetDetailedStats() map[string]any {
 			"reserved":  m.usage.Reserved,
 			"available": m.usage.Available,
 		},
-		"budget": m.budget.GetStats(),
+		"budget": budgetStats,
 		"stats":  m.stats,
 	}
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	ctxmanager "github.com/vigo999/ms-cli/agent/context"
 	"github.com/vigo999/ms-cli/test/mocks"
 )
 
@@ -230,17 +231,17 @@ func TestParseStepLine(t *testing.T) {
 func TestCompactStrategy(t *testing.T) {
 	tests := []struct {
 		input    string
-		expected CompactStrategy
+		expected ctxmanager.CompactStrategy
 	}{
-		{"simple", CompactStrategySimple},
-		{"summarize", CompactStrategySummarize},
-		{"priority", CompactStrategyPriority},
-		{"hybrid", CompactStrategyHybrid},
-		{"unknown", CompactStrategySimple},
+		{"simple", ctxmanager.CompactStrategySimple},
+		{"summarize", ctxmanager.CompactStrategySummarize},
+		{"priority", ctxmanager.CompactStrategyPriority},
+		{"hybrid", ctxmanager.CompactStrategyHybrid},
+		{"unknown", ctxmanager.CompactStrategySimple},
 	}
 
 	for _, test := range tests {
-		result := ParseCompactStrategy(test.input)
+		result := ctxmanager.ParseCompactStrategy(test.input)
 		if result != test.expected {
 			t.Errorf("ParseCompactStrategy('%s') = %v, expected %v", test.input, result, test.expected)
 		}

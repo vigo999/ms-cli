@@ -16,6 +16,7 @@ import (
 	"github.com/vigo999/ms-cli/tools"
 	"github.com/vigo999/ms-cli/tools/fs"
 	"github.com/vigo999/ms-cli/tools/shell"
+	"github.com/vigo999/ms-cli/trace"
 	"github.com/vigo999/ms-cli/ui/model"
 )
 
@@ -102,6 +103,12 @@ func Bootstrap(cfg BootstrapConfig) (*Application, error) {
 		MaxHistoryRounds:    config.Context.MaxHistoryRounds,
 	})
 
+	// Initialize per-session trajectory writer.
+	traceWriter, err := trace.NewTimestampWriter(filepath.Join(workDir, ".cache"))
+	if err != nil {
+		return nil, fmt.Errorf("init trace writer: %w", err)
+	}
+
 	// Initialize engine
 	// MaxIterations = 0 means no limit (user can interrupt with Ctrl+C)
 	engineCfg := loop.EngineConfig{
@@ -112,22 +119,24 @@ func Bootstrap(cfg BootstrapConfig) (*Application, error) {
 	}
 	engine := loop.NewEngine(engineCfg, provider, toolRegistry)
 	engine.SetContextManager(ctxManager)
+	engine.SetTraceWriter(traceWriter)
 
 	// Initialize permission service (default allow for now)
 	permService := loop.NewDefaultPermissionService(config.Permissions)
 	engine.SetPermissionService(permService)
 
 	return &Application{
-		Engine:         engine,
-		EventCh:        make(chan model.Event, 64),
-		Demo:           false,
-		WorkDir:        workDir,
-		RepoURL:        "github.com/vigo999/ms-cli",
-		Config:         config,
-		toolRegistry:   toolRegistry,
-		ctxManager:     ctxManager,
-		permService:    permService,
-		stateManager:   stateManager,
+		Engine:       engine,
+		EventCh:      make(chan model.Event, 64),
+		Demo:         false,
+		WorkDir:      workDir,
+		RepoURL:      "github.com/vigo999/ms-cli",
+		Config:       config,
+		toolRegistry: toolRegistry,
+		ctxManager:   ctxManager,
+		permService:  permService,
+		stateManager: stateManager,
+		traceWriter:  traceWriter,
 	}, nil
 }
 

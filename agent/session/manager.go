@@ -10,11 +10,11 @@ import (
 
 // Manager 会话管理器
 type Manager struct {
-	mu          sync.RWMutex
-	store       Store
-	config      Config
-	current     *Session
-	sessions    map[ID]*Session // 缓存
+	mu       sync.RWMutex
+	store    Store
+	config   Config
+	current  *Session
+	sessions map[ID]*Session // 缓存
 }
 
 // NewManager 创建新的会话管理器
@@ -298,17 +298,24 @@ func (m *Manager) RemoveTag(id ID, tag string) error {
 // GetMessages 获取会话消息
 func (m *Manager) GetMessages(id ID) ([]llm.Message, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	session, ok := m.sessions[id]
-	if !ok {
-		var err error
-		session, err = m.store.Load(id)
-		if err != nil {
-			return nil, err
-		}
-		m.sessions[id] = session
+	m.mu.RUnlock()
+	if ok {
+		return session.Messages, nil
 	}
+
+	loaded, err := m.store.Load(id)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	// Double-check after acquiring write lock to avoid duplicate map writes.
+	if session, ok = m.sessions[id]; !ok {
+		m.sessions[id] = loaded
+		session = loaded
+	}
+	m.mu.Unlock()
 
 	return session.Messages, nil
 }

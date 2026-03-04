@@ -252,20 +252,20 @@ func (r *SimpleToolRegistry) List() []Tool {
 
 // StepExecutionResult 步骤执行结果
 type StepExecutionResult struct {
-	Step      *PlanStep
-	Success   bool
-	Result    string
-	Error     error
-	Duration  int64 // milliseconds
+	Step     *PlanStep
+	Success  bool
+	Result   string
+	Error    error
+	Duration int64 // milliseconds
 }
 
 // ExecutionReport 执行报告
 type ExecutionReport struct {
-	Plan       *Plan
-	Results    []StepExecutionResult
-	StartTime  int64
-	EndTime    int64
-	TotalSteps int
+	Plan         *Plan
+	Results      []StepExecutionResult
+	StartTime    int64
+	EndTime      int64
+	TotalSteps   int
 	SuccessSteps int
 	FailedSteps  int
 	SkippedSteps int
@@ -287,7 +287,7 @@ func (e *PlanExecutor) GenerateReport(plan *Plan) *ExecutionReport {
 		}
 
 		if step.Error != "" {
-			result.Error = fmt.Errorf(step.Error)
+			result.Error = fmt.Errorf("%s", step.Error)
 		}
 
 		report.Results = append(report.Results, result)

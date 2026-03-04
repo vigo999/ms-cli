@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	ctxmanager "github.com/vigo999/ms-cli/agent/context"
 	"github.com/vigo999/ms-cli/integrations/llm"
 	"github.com/vigo999/ms-cli/tools"
+	"github.com/vigo999/ms-cli/trace"
 )
 
 // EngineConfig holds engine configuration.
@@ -30,9 +32,10 @@ type Engine struct {
 	tools      *tools.Registry
 	ctxManager *ctxmanager.Manager
 	permission PermissionService
+	trace      trace.Writer
 
 	// Plan Mode 组件
-	planner   *Planner
+	planner      *Planner
 	planExecutor *PlanExecutor
 	modeCallback ModeCallback
 }
@@ -95,6 +98,11 @@ func (e *Engine) SetRunMode(mode RunMode) {
 	e.config.ModeConfig.Mode = mode
 }
 
+// SetTraceWriter sets the trace writer.
+func (e *Engine) SetTraceWriter(w trace.Writer) {
+	e.trace = w
+}
+
 // Run executes a task and returns events.
 func (e *Engine) Run(task Task) ([]Event, error) {
 	ctx := context.Background()
@@ -103,23 +111,52 @@ func (e *Engine) Run(task Task) ([]Event, error) {
 
 // RunWithContext executes a task with context.
 func (e *Engine) RunWithContext(ctx context.Context, task Task) ([]Event, error) {
+	startedAt := time.Now()
+	e.writeTrace("run_started", map[string]any{
+		"task_id":      task.ID,
+		"description":  task.Description,
+		"mode":         e.config.ModeConfig.Mode.String(),
+		"max_tokens":   e.config.MaxTokens,
+		"temperature":  e.config.Temperature,
+		"started_at":   startedAt,
+		"max_iter":     e.config.MaxIterations,
+		"timeout_turn": e.config.TimeoutPerTurn.String(),
+	})
+
+	var (
+		events []Event
+		err    error
+	)
 	switch e.config.ModeConfig.Mode {
 	case ModePlan:
-		return e.runWithPlanMode(ctx, task)
+		events, err = e.runWithPlanMode(ctx, task)
 	case ModeReview:
-		return e.runWithReviewMode(ctx, task)
+		events, err = e.runWithReviewMode(ctx, task)
 	default:
-		return e.runStandard(ctx, task)
+		events, err = e.runStandard(ctx, task)
 	}
+
+	finishedTrace := map[string]any{
+		"task_id":     task.ID,
+		"description": task.Description,
+		"finished_at": time.Now(),
+		"duration_ms": time.Since(startedAt).Milliseconds(),
+		"event_count": len(events),
+	}
+	if err != nil {
+		finishedTrace["error"] = err.Error()
+	}
+	e.writeTrace("run_finished", finishedTrace)
+	return events, err
 }
 
 // runStandard 标准模式执行
 func (e *Engine) runStandard(ctx context.Context, task Task) ([]Event, error) {
 	exec := &executor{
-		engine:     e,
-		task:       task,
-		events:     make([]Event, 0),
-		startTime:  time.Now(),
+		engine:    e,
+		task:      task,
+		events:    make([]Event, 0),
+		startTime: time.Now(),
 	}
 	return exec.run(ctx)
 }
@@ -127,21 +164,27 @@ func (e *Engine) runStandard(ctx context.Context, task Task) ([]Event, error) {
 // runWithPlanMode Plan Mode 执行
 func (e *Engine) runWithPlanMode(ctx context.Context, task Task) ([]Event, error) {
 	events := make([]Event, 0)
-	events = append(events, NewEvent(EventTaskStarted, fmt.Sprintf("Task (Plan Mode): %s", task.Description)))
-
-	// 1. 生成计划
-	events = append(events, NewEvent(EventAgentThinking, "Generating plan..."))
-	plan, err := e.planner.GeneratePlan(ctx, task.Description, e.getAvailableTools())
-	if err != nil {
-		events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Failed to generate plan: %v", err)))
-		return events, fmt.Errorf("generate plan: %w", err)
+	appendEvent := func(ev Event) {
+		events = append(events, ev)
+		e.writeTrace("event", ev)
 	}
 
-	events = append(events, NewEvent(EventLLMResponse, fmt.Sprintf("Plan created with %d steps", len(plan.Steps))))
+	appendEvent(NewEvent(EventTaskStarted, fmt.Sprintf("Task (Plan Mode): %s", task.Description)))
+
+	// 1. 生成计划
+	appendEvent(NewEvent(EventAgentThinking, "Generating plan..."))
+	plan, err := e.planner.GeneratePlan(ctx, task.Description, e.getAvailableTools())
+	if err != nil {
+		appendEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Failed to generate plan: %v", err)))
+		return events, fmt.Errorf("generate plan: %w", err)
+	}
+	e.writeTrace("plan_generated", plan)
+
+	appendEvent(NewEvent(EventLLMResponse, fmt.Sprintf("Plan created with %d steps", len(plan.Steps))))
 
 	// 2. 通知计划创建
 	if err := e.modeCallback.OnPlanCreated(plan); err != nil {
-		events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Plan callback error: %v", err)))
+		appendEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Plan callback error: %v", err)))
 		return events, err
 	}
 
@@ -152,7 +195,7 @@ func (e *Engine) runWithPlanMode(ctx context.Context, task Task) ([]Event, error
 		// 简化实现：直接批准
 		plan.Approve()
 		if err := e.modeCallback.OnPlanApproved(plan); err != nil {
-			events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Plan approval error: %v", err)))
+			appendEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Plan approval error: %v", err)))
 			return events, err
 		}
 	} else {
@@ -161,13 +204,14 @@ func (e *Engine) runWithPlanMode(ctx context.Context, task Task) ([]Event, error
 
 	// 4. 执行计划
 	if err := e.planExecutor.Execute(ctx, plan); err != nil {
-		events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Plan execution failed: %v", err)))
+		appendEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Plan execution failed: %v", err)))
 		return events, err
 	}
 
 	// 5. 生成结果
 	report := e.planExecutor.GenerateReport(plan)
-	events = append(events, NewEvent(EventTaskCompleted, report.ToMarkdown()))
+	e.writeTrace("plan_report", report)
+	appendEvent(NewEvent(EventTaskCompleted, report.ToMarkdown()))
 
 	return events, nil
 }
@@ -177,23 +221,30 @@ func (e *Engine) runWithReviewMode(ctx context.Context, task Task) ([]Event, err
 	// Review Mode: 每步执行前确认
 	// 简化实现：使用 Plan Mode 但每步确认
 	events := make([]Event, 0)
-	events = append(events, NewEvent(EventTaskStarted, fmt.Sprintf("Task (Review Mode): %s", task.Description)))
+	appendEvent := func(ev Event) {
+		events = append(events, ev)
+		e.writeTrace("event", ev)
+	}
+
+	appendEvent(NewEvent(EventTaskStarted, fmt.Sprintf("Task (Review Mode): %s", task.Description)))
 
 	// 生成单步计划
 	plan := NewPlan(task.Description)
 	plan.AddStep(task.Description)
 	plan.Approve()
+	e.writeTrace("review_plan_generated", plan)
 
 	// 执行并确认
 	for _, step := range plan.Steps {
 		// 请求确认
 		confirmed, err := e.modeCallback.OnStepNeedsConfirmation(step, step.Index)
 		if err != nil {
-			events = append(events, NewEvent(EventTaskFailed, fmt.Sprintf("Confirmation error: %v", err)))
+			appendEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Confirmation error: %v", err)))
 			return events, err
 		}
 		if !confirmed {
 			step.Skip()
+			e.writeTrace("review_step_skipped", step)
 			continue
 		}
 
@@ -205,12 +256,20 @@ func (e *Engine) runWithReviewMode(ctx context.Context, task Task) ([]Event, err
 		}
 		events = append(events, stepEvents...)
 		step.Complete("Executed")
+		e.writeTrace("review_step_completed", step)
 	}
 
 	plan.Complete()
-	events = append(events, NewEvent(EventTaskCompleted, "Task completed with review"))
+	appendEvent(NewEvent(EventTaskCompleted, "Task completed with review"))
 
 	return events, nil
+}
+
+func (e *Engine) writeTrace(eventType string, payload any) {
+	if e.trace == nil {
+		return
+	}
+	_ = e.trace.Write(eventType, payload)
 }
 
 // getAvailableTools 获取可用工具列表
@@ -248,6 +307,13 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 	// Add initial user message
 	ex.engine.ctxManager.AddMessage(llm.NewUserMessage(ex.task.Description))
 
+	ex.engine.writeTrace("user_task", map[string]any{
+		"task_id":      ex.task.ID,
+		"description":  ex.task.Description,
+		"received_at":  time.Now(),
+		"context_size": len(ex.engine.ctxManager.GetMessages()),
+	})
+
 	ex.addEvent(NewEvent(EventTaskStarted, fmt.Sprintf("Task: %s", ex.task.Description)))
 	ex.addEvent(NewEvent(EventAgentThinking, ""))
 
@@ -269,26 +335,39 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 		if timeout == 0 {
 			timeout = 180 * time.Second // Default 3 minutes
 		}
-		
+
 		llmCtx, cancel := context.WithTimeout(ctx, timeout)
-		resp, err := ex.engine.provider.Complete(llmCtx, &llm.CompletionRequest{
+		req := &llm.CompletionRequest{
 			Model:       "", // Use provider default
 			Messages:    messages,
 			Tools:       tools,
 			Temperature: ex.engine.config.Temperature,
+		}
+		ex.engine.writeTrace("llm_request", map[string]any{
+			"iteration": ex.iterCount,
+			"request":   req,
 		})
+		resp, err := ex.engine.provider.Complete(llmCtx, req)
 		cancel()
 
 		if err != nil {
 			// Check if it's a timeout error and provide helpful message
 			errMsg := fmt.Sprintf("LLM error: %v", err)
 			if ctx.Err() == context.DeadlineExceeded || llmCtx.Err() == context.DeadlineExceeded {
-				errMsg = fmt.Sprintf("Request timeout. The conversation may be too long (ctx: %d tokens). Try /compact to reduce context size.", 
+				errMsg = fmt.Sprintf("Request timeout. The conversation may be too long (ctx: %d tokens). Try /compact to reduce context size.",
 					ex.engine.ctxManager.TokenUsage().Current)
 			}
 			ex.addEvent(NewEvent(EventTaskFailed, errMsg))
+			ex.engine.writeTrace("llm_error", map[string]any{
+				"iteration": ex.iterCount,
+				"error":     err.Error(),
+			})
 			return ex.events, fmt.Errorf("LLM completion: %w", err)
 		}
+		ex.engine.writeTrace("llm_response", map[string]any{
+			"iteration": ex.iterCount,
+			"response":  resp,
+		})
 
 		// Track usage
 		ex.totalUsage.PromptTokens += resp.Usage.PromptTokens
@@ -358,9 +437,20 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
 		return nil
 	}
+	ex.engine.writeTrace("tool_call", tc)
 
 	// Check permission
 	action := string(tc.Function.Arguments)
+	if toolName == "shell" {
+		var shellArgs struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal(tc.Function.Arguments, &shellArgs); err == nil {
+			if cmd := strings.TrimSpace(shellArgs.Command); cmd != "" {
+				action = cmd
+			}
+		}
+	}
 	granted, err := ex.engine.permission.Request(ctx, toolName, action, "")
 	if err != nil {
 		return err
@@ -369,6 +459,11 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		errMsg := fmt.Sprintf("Permission denied for tool: %s", toolName)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
 		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
+		ex.engine.writeTrace("tool_permission_denied", map[string]any{
+			"tool":    toolName,
+			"action":  action,
+			"call_id": tc.ID,
+		})
 		return nil
 	}
 
@@ -381,6 +476,11 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
 		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
+		ex.engine.writeTrace("tool_exec_error", map[string]any{
+			"tool":    toolName,
+			"call_id": tc.ID,
+			"error":   err.Error(),
+		})
 		return nil
 	}
 
@@ -389,8 +489,19 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		errMsg := result.Error.Error()
 		ex.addEvent(NewEvent(EventToolError, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg)))
 		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
+		ex.engine.writeTrace("tool_result_error", map[string]any{
+			"tool":    toolName,
+			"call_id": tc.ID,
+			"error":   errMsg,
+		})
 		return nil
 	}
+	ex.engine.writeTrace("tool_result", map[string]any{
+		"tool":    toolName,
+		"call_id": tc.ID,
+		"content": result.Content,
+		"summary": result.Summary,
+	})
 
 	// Add tool event based on tool type
 	ex.addToolEvent(toolName, result)
@@ -434,6 +545,7 @@ func (ex *executor) addEvent(ev Event) {
 	ev.TokensUsed = ex.totalUsage.TotalTokens
 
 	ex.events = append(ex.events, ev)
+	ex.engine.writeTrace("event", ev)
 }
 
 // defaultSystemPrompt returns the default system prompt.

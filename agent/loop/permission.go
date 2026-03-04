@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -261,6 +262,8 @@ func (s *DefaultPermissionService) CheckCommand(command string) PermissionLevel 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	command = normalizeCommandInput(command)
+
 	// 解析命令名
 	cmd := extractCommandName(command)
 
@@ -271,7 +274,7 @@ func (s *DefaultPermissionService) CheckCommand(command string) PermissionLevel 
 
 	// 检查是否是危险命令
 	if IsDangerousCommand(command) {
-		return maxPermission(s.default_, PermissionAsk)
+		return minPermission(s.default_, PermissionAsk)
 	}
 
 	return s.default_
@@ -400,6 +403,13 @@ func maxPermission(a, b PermissionLevel) PermissionLevel {
 	return b
 }
 
+func minPermission(a, b PermissionLevel) PermissionLevel {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // extractCommandName 从命令字符串中提取命令名
 func extractCommandName(command string) string {
 	// 去除前导空格
@@ -412,6 +422,24 @@ func extractCommandName(command string) string {
 	}
 
 	return parts[0]
+}
+
+func normalizeCommandInput(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+
+	var payload struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(command), &payload); err == nil {
+		if cmd := strings.TrimSpace(payload.Command); cmd != "" {
+			return cmd
+		}
+	}
+
+	return command
 }
 
 // NoOpPermissionService is a permission service that always allows.

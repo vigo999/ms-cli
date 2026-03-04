@@ -86,6 +86,11 @@ func (fs *FileStore) Delete(id ID) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
+	return fs.deleteNoLock(id)
+}
+
+// deleteNoLock 删除会话文件（调用者必须持有 fs.mu）。
+func (fs *FileStore) deleteNoLock(id ID) error {
 	filepath := fs.getFilePath(id)
 	if err := os.Remove(filepath); err != nil {
 		if os.IsNotExist(err) {
@@ -93,7 +98,6 @@ func (fs *FileStore) Delete(id ID) error {
 		}
 		return fmt.Errorf("delete session file: %w", err)
 	}
-
 	return nil
 }
 
@@ -280,8 +284,9 @@ func (fs *FileStore) CleanupOldSessions(maxAge time.Duration) (int, error) {
 		// 删除过期的文件
 		if info.ModTime().Before(cutoff) {
 			id := ID(strings.TrimSuffix(entry.Name(), ".json"))
-			fs.Delete(id)
-			deleted++
+			if err := fs.deleteNoLock(id); err == nil {
+				deleted++
+			}
 		}
 	}
 

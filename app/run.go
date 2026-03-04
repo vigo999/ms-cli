@@ -14,6 +14,10 @@ import (
 // Run starts the TUI. In demo mode it feeds fake events; in real mode it
 // bridges user input to the engine.
 func (a *Application) Run() error {
+	if closer, ok := a.traceWriter.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+
 	if a.Demo {
 		return a.runDemo()
 	}

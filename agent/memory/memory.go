@@ -8,15 +8,15 @@ import (
 
 // Manager 记忆管理器
 type Manager struct {
-	mu       sync.RWMutex
-	store    Store
-	policy   Policy
-	config   Config
+	mu        sync.RWMutex
+	store     Store
+	policy    Policy
+	config    Config
 	retriever *Retriever
 
 	// 缓存
-	cache      map[string]*MemoryItem
-	cacheSize  int
+	cache     map[string]*MemoryItem
+	cacheSize int
 
 	// 统计
 	stats Stats
@@ -24,10 +24,10 @@ type Manager struct {
 
 // Stats 统计信息
 type Stats struct {
-	TotalSaved    int64
+	TotalSaved     int64
 	TotalRetrieved int64
-	TotalDeleted  int64
-	CompactCount  int64
+	TotalDeleted   int64
+	CompactCount   int64
 }
 
 // NewManager 创建新的记忆管理器
@@ -66,8 +66,9 @@ func (m *Manager) Save(item *MemoryItem) error {
 	}
 
 	// 设置 TTL（如果没有设置）
-	if item.ExpiresAt == nil && m.policy.DefaultTTL > 0 {
-		item.SetTTL(m.policy.DefaultTTL)
+	typeTTL := m.policy.GetTTLForType(item.Type)
+	if item.ExpiresAt == nil && typeTTL > 0 {
+		item.SetTTL(typeTTL)
 	}
 
 	m.mu.Lock()

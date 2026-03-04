@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"os"
 	"testing"
 	"time"
 )
@@ -32,9 +31,9 @@ func TestNewMemoryItem(t *testing.T) {
 
 func TestSetTTL(t *testing.T) {
 	item := NewMemoryItem(MemoryTypeFact, "Test")
-	
+
 	item.SetTTL(1 * time.Hour)
-	
+
 	if item.ExpiresAt == nil {
 		t.Fatal("ExpiresAt should be set")
 	}
@@ -46,7 +45,7 @@ func TestSetTTL(t *testing.T) {
 
 func TestIsExpired(t *testing.T) {
 	item := NewMemoryItem(MemoryTypeFact, "Test")
-	
+
 	// Not expired initially
 	if item.IsExpired() {
 		t.Error("New item should not be expired")
@@ -54,7 +53,7 @@ func TestIsExpired(t *testing.T) {
 
 	// Set expired TTL
 	item.SetTTL(-1 * time.Hour)
-	
+
 	if !item.IsExpired() {
 		t.Error("Item with past TTL should be expired")
 	}
@@ -62,10 +61,10 @@ func TestIsExpired(t *testing.T) {
 
 func TestTags(t *testing.T) {
 	item := NewMemoryItem(MemoryTypeFact, "Test")
-	
+
 	item.AddTag("tag1")
 	item.AddTag("tag2")
-	
+
 	if len(item.Tags) != 2 {
 		t.Errorf("Expected 2 tags, got %d", len(item.Tags))
 	}
@@ -85,7 +84,7 @@ func TestTags(t *testing.T) {
 
 func TestMetadata(t *testing.T) {
 	item := NewMemoryItem(MemoryTypeFact, "Test")
-	
+
 	item.SetMetadata("key1", "value1")
 	item.SetMetadata("key2", 123)
 
@@ -102,10 +101,10 @@ func TestMetadata(t *testing.T) {
 
 func TestRecordAccess(t *testing.T) {
 	item := NewMemoryItem(MemoryTypeFact, "Test")
-	
+
 	initialCount := item.AccessCount
 	item.RecordAccess()
-	
+
 	if item.AccessCount != initialCount+1 {
 		t.Errorf("Expected access count %d, got %d", initialCount+1, item.AccessCount)
 	}
@@ -155,7 +154,7 @@ func TestDefaultQuery(t *testing.T) {
 func TestMemoryManager(t *testing.T) {
 	// Create temp directory for test
 	tempDir := t.TempDir()
-	
+
 	store, err := NewSQLiteStore(tempDir+"/test.db", DefaultConfig())
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
@@ -357,8 +356,11 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Verify deleted
-	_, err := mgr.Get(item.ID)
-	if err == nil {
+	got, err := mgr.Get(item.ID)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if got != nil {
 		t.Error("Should not be able to get deleted item")
 	}
 }
@@ -382,8 +384,11 @@ func TestDeleteExpired(t *testing.T) {
 	}
 
 	// Verify deleted
-	_, err := mgr.Get(item.ID)
-	if err == nil {
+	got, err := mgr.Get(item.ID)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if got != nil {
 		t.Error("Expired item should be deleted")
 	}
 }

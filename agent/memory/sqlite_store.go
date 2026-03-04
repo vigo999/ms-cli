@@ -232,10 +232,7 @@ func (s *SQLiteStore) Query(q Query) ([]*MemoryItem, error) {
 	}
 
 	// 排序
-	orderBy := string(q.OrderBy)
-	if orderBy == "" {
-		orderBy = "created_at"
-	}
+	orderBy := sanitizeOrderBy(string(q.OrderBy))
 	orderDir := "ASC"
 	if q.OrderDesc {
 		orderDir = "DESC"
@@ -360,12 +357,14 @@ func (s *SQLiteStore) GetStats() (MemoryStats, error) {
 	stats.ExpiredCount = expiredCount
 
 	// 平均重要性
-	var avgImportance float64
+	var avgImportance sql.NullFloat64
 	err = s.db.QueryRow("SELECT AVG(importance) FROM memories").Scan(&avgImportance)
 	if err != nil {
 		return stats, err
 	}
-	stats.AvgImportance = avgImportance
+	if avgImportance.Valid {
+		stats.AvgImportance = avgImportance.Float64
+	}
 
 	return stats, nil
 }
@@ -502,6 +501,19 @@ func (qb *queryBuilder) add(condition string, args ...any) {
 
 func (qb *queryBuilder) whereClause() string {
 	return strings.Join(qb.conditions, " AND ")
+}
+
+func sanitizeOrderBy(orderBy string) string {
+	switch orderBy {
+	case string(OrderByCreatedAt),
+		string(OrderByUpdatedAt),
+		string(OrderByImportance),
+		string(OrderByAccessCount),
+		string(OrderByLastAccess):
+		return orderBy
+	default:
+		return string(OrderByCreatedAt)
+	}
 }
 
 // serializeEmbedding 将 embedding 序列化为字节

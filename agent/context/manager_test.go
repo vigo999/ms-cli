@@ -33,7 +33,7 @@ func TestNewManager(t *testing.T) {
 
 func TestSetSystemPrompt(t *testing.T) {
 	mgr := NewManager(DefaultManagerConfig())
-	
+
 	prompt := "You are a helpful assistant."
 	mgr.SetSystemPrompt(prompt)
 
@@ -53,7 +53,7 @@ func TestSetSystemPrompt(t *testing.T) {
 
 func TestAddMessage(t *testing.T) {
 	mgr := NewManager(DefaultManagerConfig())
-	
+
 	msg := llm.NewUserMessage("Hello")
 	err := mgr.AddMessage(msg)
 	if err != nil {
@@ -72,7 +72,7 @@ func TestAddMessage(t *testing.T) {
 
 func TestAddToolResult(t *testing.T) {
 	mgr := NewManager(DefaultManagerConfig())
-	
+
 	err := mgr.AddToolResult("call_123", "Result content")
 	if err != nil {
 		t.Fatalf("AddToolResult failed: %v", err)
@@ -94,16 +94,16 @@ func TestAddToolResult(t *testing.T) {
 
 func TestGetMessages(t *testing.T) {
 	mgr := NewManager(DefaultManagerConfig())
-	
+
 	// Set system prompt
 	mgr.SetSystemPrompt("System prompt")
-	
+
 	// Add user message
 	mgr.AddMessage(llm.NewUserMessage("Hello"))
-	
+
 	// Get all messages
 	messages := mgr.GetMessages()
-	
+
 	if len(messages) != 2 {
 		t.Errorf("Expected 2 messages (system + user), got %d", len(messages))
 	}
@@ -119,7 +119,7 @@ func TestGetMessages(t *testing.T) {
 
 func TestClear(t *testing.T) {
 	mgr := NewManager(DefaultManagerConfig())
-	
+
 	mgr.SetSystemPrompt("System")
 	mgr.AddMessage(llm.NewUserMessage("Hello"))
 	mgr.AddMessage(llm.NewAssistantMessage("Hi"))
@@ -140,7 +140,7 @@ func TestClear(t *testing.T) {
 
 func TestTokenUsage(t *testing.T) {
 	mgr := NewManager(DefaultManagerConfig())
-	
+
 	initialUsage := mgr.TokenUsage()
 	if initialUsage.Current != 0 {
 		t.Errorf("Expected initial usage to be 0, got %d", initialUsage.Current)
@@ -148,7 +148,7 @@ func TestTokenUsage(t *testing.T) {
 
 	// Add messages
 	mgr.AddMessage(llm.NewUserMessage("Hello world"))
-	
+
 	usage := mgr.TokenUsage()
 	if usage.Current == 0 {
 		t.Error("Token usage should increase after adding message")
@@ -163,7 +163,7 @@ func TestIsWithinBudget(t *testing.T) {
 	cfg := DefaultManagerConfig()
 	cfg.MaxTokens = 100
 	cfg.ReserveTokens = 20
-	
+
 	mgr := NewManager(cfg)
 
 	// Small message should be within budget
@@ -175,7 +175,7 @@ func TestIsWithinBudget(t *testing.T) {
 
 func TestEstimateTokens(t *testing.T) {
 	mgr := NewManager(DefaultManagerConfig())
-	
+
 	msgs := []llm.Message{
 		llm.NewUserMessage("Hello"),
 		llm.NewAssistantMessage("World"),
@@ -206,9 +206,9 @@ func TestGetStats(t *testing.T) {
 func TestCompact(t *testing.T) {
 	cfg := DefaultManagerConfig()
 	cfg.MaxHistoryRounds = 2
-	
+
 	mgr := NewManager(cfg)
-	
+
 	// Add many messages
 	for i := 0; i < 10; i++ {
 		mgr.AddMessage(llm.NewUserMessage("Message"))
@@ -228,9 +228,9 @@ func TestCompact(t *testing.T) {
 
 func TestSetCompactStrategy(t *testing.T) {
 	mgr := NewManager(DefaultManagerConfig())
-	
+
 	mgr.SetCompactStrategy(CompactStrategySummarize)
-	
+
 	if mgr.config.CompactStrategy != CompactStrategySummarize {
 		t.Errorf("Expected strategy to be CompactStrategySummarize, got %v", mgr.config.CompactStrategy)
 	}
@@ -249,7 +249,7 @@ func TestGetMessagePriority(t *testing.T) {
 
 func TestTruncateTo(t *testing.T) {
 	mgr := NewManager(DefaultManagerConfig())
-	
+
 	// Add messages
 	for i := 0; i < 5; i++ {
 		mgr.AddMessage(llm.NewUserMessage("Message"))
@@ -265,7 +265,7 @@ func TestTruncateTo(t *testing.T) {
 
 func TestBudgetAllocation(t *testing.T) {
 	allocation := DefaultBudgetAllocation()
-	
+
 	if allocation.SystemPercent+allocation.HistoryPercent+
 		allocation.ToolResultPercent+allocation.ReservePercent != 100 {
 		t.Error("Budget allocation percentages should sum to 100")
@@ -289,7 +289,7 @@ func TestBudgetValidation(t *testing.T) {
 	// Invalid: sum != 100
 	invalidAllocation := BudgetAllocation{
 		SystemPercent:     50,
-		HistoryPercent:    50,
+		HistoryPercent:    40,
 		ToolResultPercent: 0,
 		ReservePercent:    0,
 	}
@@ -302,11 +302,11 @@ func TestBudgetValidation(t *testing.T) {
 
 func TestPriorityScorer(t *testing.T) {
 	scorer := NewPriorityScorer()
-	
+
 	// System message should have high priority
 	systemMsg := llm.NewSystemMessage("System prompt")
 	priority := scorer.ScoreMessage(systemMsg, 0, 1)
-	
+
 	if priority < PriorityHigh {
 		t.Errorf("System message should have high priority, got %d", priority)
 	}
@@ -314,7 +314,7 @@ func TestPriorityScorer(t *testing.T) {
 	// User message
 	userMsg := llm.NewUserMessage("Hello")
 	priority = scorer.ScoreMessage(userMsg, 0, 1)
-	
+
 	if priority < PriorityMedium {
 		t.Errorf("User message should have at least medium priority, got %d", priority)
 	}
