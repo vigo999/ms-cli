@@ -39,7 +39,7 @@ func (a *Application) runReal() error {
 		a.RepoURL,
 		a.SessionModel.Provider,
 		a.SessionModel.Name,
-		a.Config.Context.MaxTokens,
+		a.Config.ResolveContextWindow(a.SessionModel.Provider, a.SessionModel.Name),
 	)
 	p := tea.NewProgram(
 		tui,
@@ -100,8 +100,9 @@ func (a *Application) startTask(input string) {
 		defer a.releaseTaskSlot(id)
 
 		err := a.Engine.RunWithContextStream(taskCtx, loop.Task{
-			Description: taskText,
-			MaxSteps:    a.Config.Engine.MaxSteps,
+			Description:      taskText,
+			MaxSteps:         a.Config.Engine.MaxSteps,
+			ContextMaxTokens: a.Config.ResolveContextBudget(a.SessionModel.Provider, a.SessionModel.Name),
 			Model: loop.ModelSpec{
 				Provider: a.SessionModel.Provider,
 				Name:     a.SessionModel.Name,
@@ -175,7 +176,7 @@ func (a *Application) runDemo() error {
 		a.RepoURL,
 		a.SessionModel.Provider,
 		a.SessionModel.Name,
-		a.Config.Context.MaxTokens,
+		a.Config.ResolveContextWindow(a.SessionModel.Provider, a.SessionModel.Name),
 	)
 	p := tea.NewProgram(
 		tui,

@@ -30,6 +30,7 @@ Rules:
 - Use relative paths.
 - Use shell only when needed.
 - Do not repeat the same shell command unless there is a clear reason.
+- Do not repeat the same glob/read/grep action with identical inputs more than once unless new evidence appears.
 - Prefer read/grep for code structure analysis; avoid repeated "ls -la".
 - If enough evidence exists, return action=final with concise conclusion.`
 
@@ -69,6 +70,10 @@ type Engine struct {
 	maxTotalCostUSD       float64
 	requireApprovalBlock  bool
 }
+
+const (
+	maxRepeatedScanAction = 3
+)
 
 const assistantSystemPrompt = `You are ms-cli assistant in a terminal UI.
 Be concise and practical.`
@@ -208,15 +213,20 @@ func (e *Engine) runWithContext(ctx context.Context, task Task, emit func(Event)
 		maxSteps = 0
 	}
 
+	contextBudget := e.contextMaxTokens
+	if task.ContextMaxTokens > 0 {
+		contextBudget = task.ContextMaxTokens
+	}
+
 	ctxManager := agentcontext.NewManager(
-		e.contextMaxTokens,
+		contextBudget,
 		e.contextCompactionRate,
 		e.contextMaxEntries,
 	)
 	ctxManager.Add("task", task.Description)
-	guard := newShellLoopGuard(e.maxRepeatedShell, 6)
+	shellGuard := newShellLoopGuard(e.maxRepeatedShell, 6)
+	scanGuard := newShellLoopGuard(maxRepeatedScanAction, 8)
 
-	totalCtx := 0
 	totalTokens := 0
 	totalCostUSD := 0.0
 	startedAt := time.Now()
@@ -241,14 +251,16 @@ func (e *Engine) runWithContext(ctx context.Context, task Task, emit func(Event)
 		}
 		push(e.newEvent(EventThinking, thinking, "", ""))
 
-		action, usage, raw, planErr := e.planNext(ctx, client, task, ctxManager.Render(), step, maxSteps)
+		renderedContext := ctxManager.Render()
+		ctxUsedNow := agentcontext.ApproxTokens(renderedContext)
+
+		action, usage, raw, planErr := e.planNext(ctx, client, task, renderedContext, step, maxSteps)
 		if usage != nil {
-			totalCtx += usage.PromptTokens
 			totalTokens += usage.TotalTokens
 			totalCostUSD += estimateCostUSD(task.Model.Provider, *usage)
 			push(Event{
 				Type:       EventTokenUsage,
-				CtxUsed:    totalCtx,
+				CtxUsed:    ctxUsedNow,
 				TokensUsed: totalTokens,
 				Time:       time.Now().UTC(),
 			})
@@ -303,6 +315,16 @@ func (e *Engine) runWithContext(ctx context.Context, task Task, emit func(Event)
 				pattern = "**/*"
 			}
 			target := "."
+			if repeats := scanGuard.Observe("glob|" + normalizeCommand(target+" "+pattern)); repeats > maxRepeatedScanAction {
+				warn := fmt.Sprintf("detected repeated glob action %q in %s (%d times). choose different action or return final.", pattern, target, repeats)
+				push(e.newEvent(EventToolError, warn, "Planner", ""))
+				ctxManager.Add("guard", warn)
+				if repeats > maxRepeatedScanAction+1 {
+					push(e.newEvent(EventReply, "检测到重复 Glob 循环，已自动停止。请细化任务范围或指定明确路径。", "", ""))
+					return events, nil
+				}
+				continue
+			}
 			allowed, permErr := e.checkPermission(ctx, "glob", pattern, target, push)
 			if permErr != nil {
 				return events, permErr
@@ -323,6 +345,17 @@ func (e *Engine) runWithContext(ctx context.Context, task Task, emit func(Event)
 			_ = e.writeTrace("tool_glob", map[string]any{"path": target, "pattern": pattern, "matches": len(matches)})
 
 		case "read":
+			path := strings.TrimSpace(action.Path)
+			if repeats := scanGuard.Observe("read|" + normalizeCommand(path)); repeats > maxRepeatedScanAction {
+				warn := fmt.Sprintf("detected repeated read action %q (%d times). choose different action or return final.", path, repeats)
+				push(e.newEvent(EventToolError, warn, "Planner", ""))
+				ctxManager.Add("guard", warn)
+				if repeats > maxRepeatedScanAction+1 {
+					push(e.newEvent(EventReply, "检测到重复读取循环，已自动停止。请细化任务范围。", "", ""))
+					return events, nil
+				}
+				continue
+			}
 			allowed, permErr := e.checkPermission(ctx, "read", action.Path, action.Path, push)
 			if permErr != nil {
 				return events, permErr
@@ -352,6 +385,16 @@ func (e *Engine) runWithContext(ctx context.Context, task Task, emit func(Event)
 			target := strings.TrimSpace(action.Path)
 			if target == "" {
 				target = "."
+			}
+			if repeats := scanGuard.Observe("grep|" + normalizeCommand(target+" "+action.Pattern)); repeats > maxRepeatedScanAction {
+				warn := fmt.Sprintf("detected repeated grep action %q in %s (%d times). choose different action or return final.", action.Pattern, target, repeats)
+				push(e.newEvent(EventToolError, warn, "Planner", ""))
+				ctxManager.Add("guard", warn)
+				if repeats > maxRepeatedScanAction+1 {
+					push(e.newEvent(EventReply, "检测到重复检索循环，已自动停止。请细化检索模式。", "", ""))
+					return events, nil
+				}
+				continue
 			}
 			allowed, permErr := e.checkPermission(ctx, "grep", action.Pattern, target, push)
 			if permErr != nil {
@@ -420,7 +463,7 @@ func (e *Engine) runWithContext(ctx context.Context, task Task, emit func(Event)
 				ctxManager.Add("shell", "denied by permissions: "+strings.TrimSpace(action.Command))
 				continue
 			}
-			if repeats := guard.Observe(action.Command); repeats > e.maxRepeatedShell {
+			if repeats := shellGuard.Observe(action.Command); repeats > e.maxRepeatedShell {
 				warn := fmt.Sprintf("detected repeated shell command %q (%d times). choose different action or return final.", action.Command, repeats)
 				push(e.newEvent(EventToolError, warn, "Planner", ""))
 				ctxManager.Add("guard", warn)

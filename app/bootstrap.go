@@ -35,9 +35,6 @@ func Bootstrap(demo bool) (*Application, error) {
 	sessionModel := cfg.ResolveModel("", "")
 	if !hasModelEnvOverride() && strings.TrimSpace(sessionState.Model.Provider) != "" {
 		sessionModel = cfg.ResolveModel(sessionState.Model.Provider, sessionState.Model.Name)
-		if strings.TrimSpace(sessionState.Model.Endpoint) != "" {
-			sessionModel.Endpoint = sessionState.Model.Endpoint
-		}
 	}
 
 	openAIKey := strings.TrimSpace(os.Getenv(cfg.Providers.OpenAI.APIKeyEnv))
@@ -83,7 +80,7 @@ func Bootstrap(demo bool) (*Application, error) {
 		Trace:                 writer,
 		DefaultMaxStep:        cfg.Engine.MaxSteps,
 		MaxOutputLines:        cfg.Engine.MaxOutputLines,
-		ContextMaxTokens:      cfg.Context.MaxTokens,
+		ContextMaxTokens:      cfg.ResolveContextBudget(sessionModel.Provider, sessionModel.Name),
 		ContextCompactionRate: cfg.Context.CompactionRatio,
 		ContextMaxEntries:     cfg.Memory.MaxItems,
 		MaxRepeatedShell:      cfg.Engine.MaxRepeatedShell,

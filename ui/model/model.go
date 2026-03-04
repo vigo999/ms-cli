@@ -84,6 +84,7 @@ type Event struct {
 	TokensUsed     int
 	ModelProvider  string
 	ModelName      string
+	ModelCtxMax    int
 	KeepMessages   int
 }
 

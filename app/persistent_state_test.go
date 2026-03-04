@@ -43,3 +43,13 @@ func TestHasModelEnvOverride_Endpoint(t *testing.T) {
 		t.Fatalf("endpoint override should be detected")
 	}
 }
+
+func TestHasModelEnvOverride_OpenAIBaseURL(t *testing.T) {
+	t.Setenv("MSCLI_MODEL_PROVIDER", "")
+	t.Setenv("MSCLI_MODEL_NAME", "")
+	t.Setenv("MSCLI_MODEL_ENDPOINT", "")
+	t.Setenv("OPENAI_BASE_URL", "https://openai-base.example.com/v1")
+	if !hasModelEnvOverride() {
+		t.Fatalf("OPENAI_BASE_URL override should be detected")
+	}
+}

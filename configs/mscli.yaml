@@ -3,7 +3,7 @@ model:
   default_model: gpt-4o-mini
 providers:
   openai:
-    endpoint: https://api.openai.com/v1
+    base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
   openrouter:
     endpoint: https://openrouter.ai/api/v1
@@ -18,7 +18,10 @@ permissions:
   allowed_tools: []
   require_approval_block: true
 context:
-  max_tokens: 24000
+  max_tokens: 0
+  model_window_tokens: 163000
+  budget_margin_tokens: 4096
+  model_windows: {}
   compaction_threshold: 0.85
 memory:
   max_items: 200

@@ -139,9 +139,18 @@ func (a *Application) cmdModel(args []string) {
 			Message: a.listModelProviders(),
 		}
 	case "show":
+		ctxWindow := a.Config.ResolveContextWindow(a.SessionModel.Provider, a.SessionModel.Name)
+		ctxBudget := a.Config.ResolveContextBudget(a.SessionModel.Provider, a.SessionModel.Name)
 		a.EventCh <- model.Event{
-			Type:    model.AgentReply,
-			Message: fmt.Sprintf("Current model: %s/%s (%s)", a.SessionModel.Provider, a.SessionModel.Name, a.SessionModel.Endpoint),
+			Type: model.AgentReply,
+			Message: fmt.Sprintf(
+				"Current model: %s/%s (%s)\nctx_window: %d\nctx_budget: %d",
+				a.SessionModel.Provider,
+				a.SessionModel.Name,
+				a.SessionModel.Endpoint,
+				ctxWindow,
+				ctxBudget,
+			),
 		}
 	case "use":
 		if len(args) < 2 {
@@ -170,6 +179,7 @@ func (a *Application) cmdModel(args []string) {
 		}
 
 		a.SessionModel = a.Config.ResolveModel(provider, name)
+		ctxMax := a.Config.ResolveContextWindow(a.SessionModel.Provider, a.SessionModel.Name)
 		if err := a.persistSessionState(); err != nil {
 			a.EventCh <- model.Event{
 				Type:     model.ToolError,
@@ -181,6 +191,7 @@ func (a *Application) cmdModel(args []string) {
 			Type:          model.ModelUpdate,
 			ModelProvider: a.SessionModel.Provider,
 			ModelName:     a.SessionModel.Name,
+			ModelCtxMax:   ctxMax,
 		}
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,

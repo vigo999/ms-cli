@@ -399,6 +399,9 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		if ev.ModelName != "" {
 			mi.Name = ev.ModelName
 		}
+		if ev.ModelCtxMax > 0 {
+			mi.CtxMax = ev.ModelCtxMax
+		}
 		a.state = a.state.WithModel(mi)
 
 	case model.ClearChat:

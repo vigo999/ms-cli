@@ -103,3 +103,93 @@ func TestBudgetMaxTokens_BackwardCompatibility(t *testing.T) {
 		t.Fatalf("legacy max_tokens should still work, got %d", cfg.Budget.MaxTokenLimit())
 	}
 }
+
+func TestResolveContextWindowAndBudget(t *testing.T) {
+	cfg := defaultConfig()
+	if got := cfg.ResolveContextWindow("openrouter", "deepseek/deepseek-r1"); got != 163000 {
+		t.Fatalf("default model window=%d want 163000", got)
+	}
+	if got := cfg.ResolveContextBudget("openrouter", "deepseek/deepseek-r1"); got != 158904 {
+		t.Fatalf("default auto budget=%d want 158904", got)
+	}
+
+	cfg.Context.ModelWindows["openrouter/deepseek/deepseek-r1"] = 200000
+	if got := cfg.ResolveContextWindow("openrouter", "deepseek/deepseek-r1"); got != 200000 {
+		t.Fatalf("override model window=%d want 200000", got)
+	}
+	if got := cfg.ResolveContextBudget("openrouter", "deepseek/deepseek-r1"); got != 195904 {
+		t.Fatalf("override auto budget=%d want 195904", got)
+	}
+}
+
+func TestResolveContextBudget_ExplicitMaxTokens(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Context.MaxTokens = 10000
+	if got := cfg.ResolveContextBudget("openrouter", "deepseek/deepseek-r1"); got != 10000 {
+		t.Fatalf("explicit context.max_tokens should win, got %d", got)
+	}
+
+	cfg.Context.MaxTokens = 300000
+	if got := cfg.ResolveContextBudget("openrouter", "deepseek/deepseek-r1"); got != 163000 {
+		t.Fatalf("budget should be capped by window, got %d", got)
+	}
+}
+
+func TestLoadConfig_OpenAIBaseURLFromConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "mscli.yaml")
+	content := `
+model:
+  default_provider: openai
+  default_model: gpt-4o-mini
+providers:
+  openai:
+    base_url: https://openai-proxy.example.com/v1
+    api_key_env: OPENAI_API_KEY
+  openrouter:
+    endpoint: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	model := cfg.ResolveModel("openai", "gpt-4o-mini")
+	if model.Endpoint != "https://openai-proxy.example.com/v1" {
+		t.Fatalf("endpoint=%s want https://openai-proxy.example.com/v1", model.Endpoint)
+	}
+}
+
+func TestLoadConfig_OpenAIBaseURLFromEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "mscli.yaml")
+	content := `
+model:
+  default_provider: openai
+  default_model: gpt-4o-mini
+providers:
+  openai:
+    endpoint: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+  openrouter:
+    endpoint: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENAI_BASE_URL", "https://openai-env.example.com/v1")
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	model := cfg.ResolveModel("openai", "gpt-4o-mini")
+	if model.Endpoint != "https://openai-env.example.com/v1" {
+		t.Fatalf("endpoint=%s want https://openai-env.example.com/v1", model.Endpoint)
+	}
+}

@@ -41,6 +41,7 @@ type ProvidersConfig struct {
 
 type ProviderConfig struct {
 	Endpoint  string `yaml:"endpoint"`
+	BaseURL   string `yaml:"base_url"`
 	APIKeyEnv string `yaml:"api_key_env"`
 }
 
@@ -59,8 +60,15 @@ type PermissionsConfig struct {
 }
 
 type ContextConfig struct {
-	MaxTokens       int     `yaml:"max_tokens"`
-	CompactionRatio float64 `yaml:"compaction_threshold"`
+	// MaxTokens is the planner-context budget. 0 means auto (derived from model window).
+	MaxTokens int `yaml:"max_tokens"`
+	// ModelWindowTokens controls top-bar context window and auto budget baseline.
+	ModelWindowTokens int `yaml:"model_window_tokens"`
+	// BudgetMarginTokens reserves tokens for system prompt / output when auto budgeting.
+	BudgetMarginTokens int `yaml:"budget_margin_tokens"`
+	// ModelWindows allows per-model overrides, key format: "<provider>/<model>".
+	ModelWindows    map[string]int `yaml:"model_windows"`
+	CompactionRatio float64        `yaml:"compaction_threshold"`
 }
 
 type MemoryConfig struct {
@@ -96,7 +104,7 @@ func defaultConfig() Config {
 		},
 		Providers: ProvidersConfig{
 			OpenAI: ProviderConfig{
-				Endpoint:  "https://api.openai.com/v1",
+				BaseURL:   "https://api.openai.com/v1",
 				APIKeyEnv: "OPENAI_API_KEY",
 			},
 			OpenRouter: ProviderConfig{
@@ -114,8 +122,11 @@ func defaultConfig() Config {
 			RequireApprovalBlock: true,
 		},
 		Context: ContextConfig{
-			MaxTokens:       24000,
-			CompactionRatio: 0.85,
+			MaxTokens:          0,
+			ModelWindowTokens:  163000,
+			BudgetMarginTokens: 4096,
+			ModelWindows:       map[string]int{},
+			CompactionRatio:    0.85,
 		},
 		Memory: MemoryConfig{
 			MaxItems: 200,
@@ -175,7 +186,7 @@ func (c *Config) applyBackwardCompatibility() {
 				c.Providers.OpenRouter.Endpoint = c.Model.Endpoint
 			}
 		default:
-			if c.Providers.OpenAI.Endpoint == "" {
+			if c.Providers.OpenAI.Endpoint == "" && c.Providers.OpenAI.BaseURL == "" {
 				c.Providers.OpenAI.Endpoint = c.Model.Endpoint
 			}
 		}
@@ -183,6 +194,10 @@ func (c *Config) applyBackwardCompatibility() {
 }
 
 func (c *Config) applyEnvOverrides() {
+	if v := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); v != "" {
+		c.Providers.OpenAI.BaseURL = v
+		c.Providers.OpenAI.Endpoint = v
+	}
 	if v := strings.TrimSpace(os.Getenv("MSCLI_MODEL_PROVIDER")); v != "" {
 		c.Model.DefaultProvider = strings.ToLower(v)
 	}
@@ -200,6 +215,22 @@ func (c *Config) applyEnvOverrides() {
 }
 
 func (c *Config) applySafeDefaults() {
+	if c.Providers.OpenAI.Endpoint == "" && c.Providers.OpenAI.BaseURL != "" {
+		c.Providers.OpenAI.Endpoint = c.Providers.OpenAI.BaseURL
+	}
+	if c.Context.MaxTokens < 0 {
+		c.Context.MaxTokens = 0
+	}
+	if c.Context.ModelWindowTokens <= 0 {
+		c.Context.ModelWindowTokens = 163000
+	}
+	if c.Context.BudgetMarginTokens < 0 {
+		c.Context.BudgetMarginTokens = 0
+	}
+	if c.Context.ModelWindows == nil {
+		c.Context.ModelWindows = map[string]int{}
+	}
+
 	if c.Budget.MaxTokens < 0 {
 		c.Budget.MaxTokens = 0
 	}
@@ -213,6 +244,9 @@ func (c *Config) applySafeDefaults() {
 
 	if c.Providers.OpenAI.Endpoint == "" {
 		c.Providers.OpenAI.Endpoint = "https://api.openai.com/v1"
+	}
+	if c.Providers.OpenAI.BaseURL == "" {
+		c.Providers.OpenAI.BaseURL = c.Providers.OpenAI.Endpoint
 	}
 	if c.Providers.OpenAI.APIKeyEnv == "" {
 		c.Providers.OpenAI.APIKeyEnv = "OPENAI_API_KEY"
@@ -276,6 +310,37 @@ func (c Config) ResolveModel(provider, modelName string) SessionModel {
 	default:
 		return SessionModel{Provider: "openai", Name: m, Endpoint: c.Providers.OpenAI.Endpoint}
 	}
+}
+
+func (c Config) ResolveContextWindow(provider, modelName string) int {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	m := strings.ToLower(strings.TrimSpace(modelName))
+	if p != "" && m != "" {
+		key := p + "/" + m
+		if v, ok := c.Context.ModelWindows[key]; ok && v > 0 {
+			return v
+		}
+	}
+	return c.Context.ModelWindowTokens
+}
+
+func (c Config) ResolveContextBudget(provider, modelName string) int {
+	window := c.ResolveContextWindow(provider, modelName)
+	if c.Context.MaxTokens > 0 {
+		if window > 0 && c.Context.MaxTokens > window {
+			return window
+		}
+		return c.Context.MaxTokens
+	}
+	margin := c.Context.BudgetMarginTokens
+	if margin < 0 {
+		margin = 0
+	}
+	budget := window - margin
+	if budget <= 0 {
+		return window
+	}
+	return budget
 }
 
 func (c Config) ShellTimeout() time.Duration {

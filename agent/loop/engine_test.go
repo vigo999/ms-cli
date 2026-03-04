@@ -56,6 +56,22 @@ func (c shellLoopClient) Generate(ctx context.Context, req domain.GenerateReques
 	}, nil
 }
 
+type globLoopFactory struct{}
+
+func (f globLoopFactory) ClientFor(spec domain.ModelSpec) (domain.ModelClient, error) {
+	return globLoopClient{}, nil
+}
+
+func (f globLoopFactory) Providers() []domain.ProviderInfo { return nil }
+
+type globLoopClient struct{}
+
+func (c globLoopClient) Generate(ctx context.Context, req domain.GenerateRequest) (*domain.GenerateResponse, error) {
+	return &domain.GenerateResponse{
+		Text: `{"action":"glob","pattern":"*","path":"."}`,
+	}, nil
+}
+
 type nopFS struct{}
 
 func (nopFS) Read(path string) (string, error) { return "", nil }
@@ -159,6 +175,37 @@ func TestRunWithContext_RepeatedShellLoopGuardStops(t *testing.T) {
 	}
 	if !strings.Contains(last.Message, "重复命令循环") {
 		t.Fatalf("expected loop-guard stop message, got %q", last.Message)
+	}
+}
+
+func TestRunWithContext_RepeatedGlobLoopGuardStops(t *testing.T) {
+	engine := NewEngine(Config{
+		FS:             nopFS{},
+		Shell:          nopShell{},
+		ModelFactory:   globLoopFactory{},
+		DefaultMaxStep: 0, // unlimited
+	})
+
+	events, err := engine.RunWithContext(context.Background(), Task{
+		Description: "scan repository",
+		Model: ModelSpec{
+			Provider: "openrouter",
+			Name:     "deepseek/deepseek-chat",
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunWithContext failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatalf("expected events")
+	}
+
+	last := events[len(events)-1]
+	if last.Type != EventReply {
+		t.Fatalf("expected final reply, got %s", last.Type)
+	}
+	if !strings.Contains(last.Message, "重复 Glob 循环") {
+		t.Fatalf("expected glob loop-guard stop message, got %q", last.Message)
 	}
 }
 

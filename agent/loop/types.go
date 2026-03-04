@@ -9,12 +9,13 @@ type ModelSpec struct {
 }
 
 type Task struct {
-	ID          string
-	SessionID   string
-	Mode        string
-	Description string
-	MaxSteps    int
-	Model       ModelSpec
+	ID               string
+	SessionID        string
+	Mode             string
+	Description      string
+	MaxSteps         int
+	ContextMaxTokens int
+	Model            ModelSpec
 }
 
 type EventType string

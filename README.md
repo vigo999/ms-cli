@@ -60,11 +60,13 @@ When input starts with `/`, the hint bar shows slash-command candidates. Use `up
 - Set API key env vars as needed:
   - `OPENAI_API_KEY`
   - `OPENROUTER_API_KEY`
+- Optional OpenAI base URL override:
+  - `OPENAI_BASE_URL`
 - Optional runtime overrides:
   - `MSCLI_MODEL_PROVIDER`
   - `MSCLI_MODEL_NAME`
   - `MSCLI_MODEL_ENDPOINT`
-- Base config lives in `configs/mscli.yaml`.
+- Base config lives in `configs/mscli.yaml` (supports `providers.openai.base_url`).
 - Session state is persisted in `.mscli/session.yaml` (model selection and provider API keys).
 
 ## Keybindings
