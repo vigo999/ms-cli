@@ -108,7 +108,7 @@ func defaultConfig() Config {
 				APIKeyEnv: "OPENAI_API_KEY",
 			},
 			OpenRouter: ProviderConfig{
-				Endpoint:  "https://openrouter.ai/api/v1",
+				BaseURL:   "https://openrouter.ai/api/v1",
 				APIKeyEnv: "OPENROUTER_API_KEY",
 			},
 		},
@@ -182,7 +182,7 @@ func (c *Config) applyBackwardCompatibility() {
 	if c.Model.Endpoint != "" {
 		switch strings.ToLower(c.Model.DefaultProvider) {
 		case "openrouter":
-			if c.Providers.OpenRouter.Endpoint == "" {
+			if c.Providers.OpenRouter.Endpoint == "" && c.Providers.OpenRouter.BaseURL == "" {
 				c.Providers.OpenRouter.Endpoint = c.Model.Endpoint
 			}
 		default:
@@ -198,6 +198,10 @@ func (c *Config) applyEnvOverrides() {
 		c.Providers.OpenAI.BaseURL = v
 		c.Providers.OpenAI.Endpoint = v
 	}
+	if v := strings.TrimSpace(os.Getenv("OPENROUTER_BASE_URL")); v != "" {
+		c.Providers.OpenRouter.BaseURL = v
+		c.Providers.OpenRouter.Endpoint = v
+	}
 	if v := strings.TrimSpace(os.Getenv("MSCLI_MODEL_PROVIDER")); v != "" {
 		c.Model.DefaultProvider = strings.ToLower(v)
 	}
@@ -207,8 +211,10 @@ func (c *Config) applyEnvOverrides() {
 	if v := strings.TrimSpace(os.Getenv("MSCLI_MODEL_ENDPOINT")); v != "" {
 		switch strings.ToLower(c.Model.DefaultProvider) {
 		case "openrouter":
+			c.Providers.OpenRouter.BaseURL = v
 			c.Providers.OpenRouter.Endpoint = v
 		default:
+			c.Providers.OpenAI.BaseURL = v
 			c.Providers.OpenAI.Endpoint = v
 		}
 	}
@@ -217,6 +223,9 @@ func (c *Config) applyEnvOverrides() {
 func (c *Config) applySafeDefaults() {
 	if c.Providers.OpenAI.Endpoint == "" && c.Providers.OpenAI.BaseURL != "" {
 		c.Providers.OpenAI.Endpoint = c.Providers.OpenAI.BaseURL
+	}
+	if c.Providers.OpenRouter.Endpoint == "" && c.Providers.OpenRouter.BaseURL != "" {
+		c.Providers.OpenRouter.Endpoint = c.Providers.OpenRouter.BaseURL
 	}
 	if c.Context.MaxTokens < 0 {
 		c.Context.MaxTokens = 0
@@ -253,6 +262,9 @@ func (c *Config) applySafeDefaults() {
 	}
 	if c.Providers.OpenRouter.Endpoint == "" {
 		c.Providers.OpenRouter.Endpoint = "https://openrouter.ai/api/v1"
+	}
+	if c.Providers.OpenRouter.BaseURL == "" {
+		c.Providers.OpenRouter.BaseURL = c.Providers.OpenRouter.Endpoint
 	}
 	if c.Providers.OpenRouter.APIKeyEnv == "" {
 		c.Providers.OpenRouter.APIKeyEnv = "OPENROUTER_API_KEY"

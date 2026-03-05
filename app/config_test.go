@@ -193,3 +193,62 @@ providers:
 		t.Fatalf("endpoint=%s want https://openai-env.example.com/v1", model.Endpoint)
 	}
 }
+
+func TestLoadConfig_OpenRouterBaseURLFromConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "mscli.yaml")
+	content := `
+model:
+  default_provider: openrouter
+  default_model: deepseek/deepseek-r1
+providers:
+  openai:
+    endpoint: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+  openrouter:
+    base_url: https://openrouter-proxy.example.com/api/v1
+    api_key_env: OPENROUTER_API_KEY
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	model := cfg.ResolveModel("openrouter", "deepseek/deepseek-r1")
+	if model.Endpoint != "https://openrouter-proxy.example.com/api/v1" {
+		t.Fatalf("endpoint=%s want https://openrouter-proxy.example.com/api/v1", model.Endpoint)
+	}
+}
+
+func TestLoadConfig_OpenRouterBaseURLFromEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "mscli.yaml")
+	content := `
+model:
+  default_provider: openrouter
+  default_model: deepseek/deepseek-r1
+providers:
+  openai:
+    endpoint: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+  openrouter:
+    endpoint: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENROUTER_BASE_URL", "https://openrouter-env.example.com/api/v1")
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	model := cfg.ResolveModel("openrouter", "deepseek/deepseek-r1")
+	if model.Endpoint != "https://openrouter-env.example.com/api/v1" {
+		t.Fatalf("endpoint=%s want https://openrouter-env.example.com/api/v1", model.Endpoint)
+	}
+}

@@ -52,3 +52,22 @@ func TestHTTPFactory_ClientForMissingKey(t *testing.T) {
 		t.Fatalf("expected missing key error")
 	}
 }
+
+func TestHTTPFactory_ClientForWithBaseURLOnly(t *testing.T) {
+	f := NewFactory(FactoryConfig{
+		Providers: map[string]ProviderConfig{
+			"openrouter": {
+				BaseURL:   "https://openrouter.ai/api/v1",
+				APIKeyEnv: "OPENROUTER_API_KEY",
+				APIKey:    "test-key",
+			},
+		},
+	})
+	cli, err := f.ClientFor(ModelSpec{Provider: "openrouter", Model: "deepseek/deepseek-r1"})
+	if err != nil {
+		t.Fatalf("ClientFor failed: %v", err)
+	}
+	if cli == nil {
+		t.Fatalf("expected non-nil client")
+	}
+}

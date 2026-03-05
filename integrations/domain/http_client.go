@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -74,7 +75,7 @@ func (c *chatCompletionsClient) Generate(ctx context.Context, req GenerateReques
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	if c.provider == "openrouter" {
+	if c.provider == "openrouter" || isOpenRouterEndpoint(c.endpoint) {
 		httpReq.Header.Set("HTTP-Referer", "https://github.com/vigo999/ms-cli")
 		httpReq.Header.Set("X-Title", "ms-cli")
 	}
@@ -119,4 +120,13 @@ func (c *chatCompletionsClient) Generate(ctx context.Context, req GenerateReques
 			TotalTokens:      parsed.Usage.TotalTokens,
 		},
 	}, nil
+}
+
+func isOpenRouterEndpoint(endpoint string) bool {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	return host == "openrouter.ai" || strings.HasSuffix(host, ".openrouter.ai")
 }

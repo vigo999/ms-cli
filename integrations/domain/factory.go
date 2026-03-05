@@ -18,10 +18,12 @@ func NewFactory(cfg FactoryConfig) *HTTPFactory {
 	providers := map[string]ProviderConfig{
 		"openai": {
 			Endpoint:  "https://api.openai.com/v1",
+			BaseURL:   "https://api.openai.com/v1",
 			APIKeyEnv: "OPENAI_API_KEY",
 		},
 		"openrouter": {
 			Endpoint:  "https://openrouter.ai/api/v1",
+			BaseURL:   "https://openrouter.ai/api/v1",
 			APIKeyEnv: "OPENROUTER_API_KEY",
 		},
 	}
@@ -30,14 +32,33 @@ func NewFactory(cfg FactoryConfig) *HTTPFactory {
 		if name == "" {
 			continue
 		}
+		if strings.TrimSpace(v.Endpoint) == "" && strings.TrimSpace(v.BaseURL) != "" {
+			v.Endpoint = strings.TrimSpace(v.BaseURL)
+		}
+		if strings.TrimSpace(v.BaseURL) == "" && strings.TrimSpace(v.Endpoint) != "" {
+			v.BaseURL = strings.TrimSpace(v.Endpoint)
+		}
 		if strings.TrimSpace(v.Endpoint) == "" {
 			v.Endpoint = providers[name].Endpoint
+		}
+		if strings.TrimSpace(v.BaseURL) == "" {
+			v.BaseURL = providers[name].BaseURL
 		}
 		if strings.TrimSpace(v.APIKeyEnv) == "" {
 			v.APIKeyEnv = providers[name].APIKeyEnv
 		}
 		if strings.TrimSpace(v.APIKey) == "" {
 			v.APIKey = providers[name].APIKey
+		}
+		providers[name] = v
+	}
+
+	for name, v := range providers {
+		if strings.TrimSpace(v.Endpoint) == "" && strings.TrimSpace(v.BaseURL) != "" {
+			v.Endpoint = strings.TrimSpace(v.BaseURL)
+		}
+		if strings.TrimSpace(v.BaseURL) == "" && strings.TrimSpace(v.Endpoint) != "" {
+			v.BaseURL = strings.TrimSpace(v.Endpoint)
 		}
 		providers[name] = v
 	}
@@ -80,6 +101,9 @@ func (f *HTTPFactory) ClientFor(spec ModelSpec) (ModelClient, error) {
 	endpoint := strings.TrimSpace(spec.Endpoint)
 	if endpoint == "" {
 		endpoint = strings.TrimSpace(pcfg.Endpoint)
+		if endpoint == "" {
+			endpoint = strings.TrimSpace(pcfg.BaseURL)
+		}
 	}
 	if endpoint == "" {
 		return nil, fmt.Errorf("provider %s endpoint is empty", provider)

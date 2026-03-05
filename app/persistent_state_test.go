@@ -53,3 +53,14 @@ func TestHasModelEnvOverride_OpenAIBaseURL(t *testing.T) {
 		t.Fatalf("OPENAI_BASE_URL override should be detected")
 	}
 }
+
+func TestHasModelEnvOverride_OpenRouterBaseURL(t *testing.T) {
+	t.Setenv("MSCLI_MODEL_PROVIDER", "")
+	t.Setenv("MSCLI_MODEL_NAME", "")
+	t.Setenv("MSCLI_MODEL_ENDPOINT", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENROUTER_BASE_URL", "https://openrouter-base.example.com/v1")
+	if !hasModelEnvOverride() {
+		t.Fatalf("OPENROUTER_BASE_URL override should be detected")
+	}
+}

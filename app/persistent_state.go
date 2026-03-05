@@ -84,5 +84,6 @@ func hasModelEnvOverride() bool {
 	return strings.TrimSpace(os.Getenv("MSCLI_MODEL_PROVIDER")) != "" ||
 		strings.TrimSpace(os.Getenv("MSCLI_MODEL_NAME")) != "" ||
 		strings.TrimSpace(os.Getenv("MSCLI_MODEL_ENDPOINT")) != "" ||
-		strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")) != ""
+		strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")) != "" ||
+		strings.TrimSpace(os.Getenv("OPENROUTER_BASE_URL")) != ""
 }

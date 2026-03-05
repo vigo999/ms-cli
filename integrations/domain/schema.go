@@ -36,6 +36,7 @@ func (e *APIError) Error() string {
 
 type ProviderConfig struct {
 	Endpoint  string
+	BaseURL   string
 	APIKeyEnv string
 	APIKey    string
 }

@@ -50,11 +50,13 @@ func Bootstrap(demo bool) (*Application, error) {
 		Providers: map[string]domain.ProviderConfig{
 			"openai": {
 				Endpoint:  cfg.Providers.OpenAI.Endpoint,
+				BaseURL:   cfg.Providers.OpenAI.BaseURL,
 				APIKeyEnv: cfg.Providers.OpenAI.APIKeyEnv,
 				APIKey:    openAIKey,
 			},
 			"openrouter": {
 				Endpoint:  cfg.Providers.OpenRouter.Endpoint,
+				BaseURL:   cfg.Providers.OpenRouter.BaseURL,
 				APIKeyEnv: cfg.Providers.OpenRouter.APIKeyEnv,
 				APIKey:    openRouterKey,
 			},
