@@ -16,11 +16,20 @@ import (
 // ReadTool reads file contents.
 type ReadTool struct {
 	workDir string
+	schema  tools.Schema
 }
 
 // NewReadTool creates a new read tool.
 func NewReadTool(workDir string) *ReadTool {
-	return &ReadTool{workDir: workDir}
+	return &ReadTool{
+		workDir: workDir,
+		schema: tools.NewSchema().
+			String("path", "Relative path to the file to read").
+			Int("offset", "Line number to start reading from (1-indexed, 0 means from start)").
+			Int("limit", "Maximum number of lines to read (0 means no limit)").
+			Required("path").
+			Build(),
+	}
 }
 
 // Name returns the tool name.
@@ -35,24 +44,12 @@ func (t *ReadTool) Description() string {
 
 // Schema returns the tool parameter schema.
 func (t *ReadTool) Schema() llm.ToolSchema {
-	return llm.ToolSchema{
-		Type: "object",
-		Properties: map[string]llm.Property{
-			"path": {
-				Type:        "string",
-				Description: "Relative path to the file to read",
-			},
-			"offset": {
-				Type:        "integer",
-				Description: "Line number to start reading from (1-indexed, 0 means from start)",
-			},
-			"limit": {
-				Type:        "integer",
-				Description: "Maximum number of lines to read (0 means no limit)",
-			},
-		},
-		Required: []string{"path"},
-	}
+	return tools.ToLLMToolSchema(t.schema)
+}
+
+// Validate validates the parameters against the schema.
+func (t *ReadTool) Validate(params json.RawMessage) []tools.ValidationError {
+	return tools.ValidateAgainstSchema(params, t.schema)
 }
 
 type readParams struct {
@@ -63,6 +60,11 @@ type readParams struct {
 
 // Execute executes the read tool.
 func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	// Validate parameters first
+	if errs := t.Validate(params); len(errs) > 0 {
+		return tools.ErrorResultf("validation failed: %v", errs), nil
+	}
+
 	var p readParams
 	if err := tools.ParseParams(params, &p); err != nil {
 		return tools.ErrorResult(err), nil

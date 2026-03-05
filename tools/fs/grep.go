@@ -17,11 +17,21 @@ import (
 // GrepTool searches for patterns in files.
 type GrepTool struct {
 	workDir string
+	schema  tools.Schema
 }
 
 // NewGrepTool creates a new grep tool.
 func NewGrepTool(workDir string) *GrepTool {
-	return &GrepTool{workDir: workDir}
+	return &GrepTool{
+		workDir: workDir,
+		schema: tools.NewSchema().
+			String("pattern", "Regular expression pattern to search for (e.g., 'func.*main', 'TODO|FIXME')").
+			String("path", "Directory or file to search in (default: current directory)").
+			String("include", "File pattern to include using glob syntax (e.g., '*.go', '*.md')").
+			Bool("case_sensitive", "Whether the search is case sensitive (default: true)").
+			Required("pattern").
+			Build(),
+	}
 }
 
 // Name returns the tool name.
@@ -36,28 +46,12 @@ func (t *GrepTool) Description() string {
 
 // Schema returns the tool parameter schema.
 func (t *GrepTool) Schema() llm.ToolSchema {
-	return llm.ToolSchema{
-		Type: "object",
-		Properties: map[string]llm.Property{
-			"pattern": {
-				Type:        "string",
-				Description: "Regular expression pattern to search for (e.g., 'func.*main', 'TODO|FIXME')",
-			},
-			"path": {
-				Type:        "string",
-				Description: "Directory or file to search in (default: current directory)",
-			},
-			"include": {
-				Type:        "string",
-				Description: "File pattern to include using glob syntax (e.g., '*.go', '*.md')",
-			},
-			"case_sensitive": {
-				Type:        "boolean",
-				Description: "Whether the search is case sensitive (default: true)",
-			},
-		},
-		Required: []string{"pattern"},
-	}
+	return tools.ToLLMToolSchema(t.schema)
+}
+
+// Validate validates the parameters against the schema.
+func (t *GrepTool) Validate(params json.RawMessage) []tools.ValidationError {
+	return tools.ValidateAgainstSchema(params, t.schema)
 }
 
 type grepParams struct {
@@ -77,6 +71,11 @@ type Match struct {
 
 // Execute executes the grep tool.
 func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	// Validate parameters first
+	if errs := t.Validate(params); len(errs) > 0 {
+		return tools.ErrorResultf("validation failed: %v", errs), nil
+	}
+
 	var p grepParams
 	if err := tools.ParseParams(params, &p); err != nil {
 		return tools.ErrorResult(err), nil

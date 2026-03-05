@@ -202,13 +202,25 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		a.state = a.state.WithThinking(false)
 		a.state = a.replaceThinking(model.Message{Kind: model.MsgAgent, Content: ev.Message})
 
+	case model.ToolCallStart:
+		// Tool is starting - show with ⏺ symbol
+		// Normalize tool name to Title Case for consistent display
+		toolName := normalizeToolName(ev.ToolName)
+		a.state = a.state.WithMessage(model.Message{
+			Kind:     model.MsgTool,
+			ToolName: toolName,
+			Display:  model.DisplayExpanded,
+			Content:  "", // Content will be added when tool completes
+			Summary:  ev.Message, // Store the formatted args in Summary for display
+		})
+
 	case model.CmdStarted:
 		// Update command count
 		stats := a.state.Stats
 		stats.Commands++
 		a.state = a.state.WithStats(stats)
 		// Shell tool message already contains the full output with $ prefix
-		a.state = a.state.WithMessage(model.Message{
+		a.state = a.updateOrAddTool(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Shell",
 			Display:  model.DisplayExpanded,
@@ -226,12 +238,13 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		stats := a.state.Stats
 		stats.FilesRead++
 		a.state = a.state.WithStats(stats)
-		a.state = a.state.WithMessage(model.Message{
+		// For read tool, Content is "Read X lines", Summary is the file path
+		a.state = a.updateOrAddTool(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Read",
-			Display:  model.DisplayCollapsed,
-			Content:  ev.Message,
-			Summary:  ev.Summary,
+			Display:  model.DisplayExpanded,
+			Content:  ev.Message,  // "Read X lines"
+			Summary:  ev.Summary, // File path
 		})
 
 	case model.ToolGrep:
@@ -239,7 +252,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		stats := a.state.Stats
 		stats.Searches++
 		a.state = a.state.WithStats(stats)
-		a.state = a.state.WithMessage(model.Message{
+		a.state = a.updateOrAddTool(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Grep",
 			Display:  model.DisplayCollapsed,
@@ -252,7 +265,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		stats := a.state.Stats
 		stats.Searches++
 		a.state = a.state.WithStats(stats)
-		a.state = a.state.WithMessage(model.Message{
+		a.state = a.updateOrAddTool(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Glob",
 			Display:  model.DisplayCollapsed,
@@ -265,7 +278,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		stats := a.state.Stats
 		stats.FilesEdited++
 		a.state = a.state.WithStats(stats)
-		a.state = a.state.WithMessage(model.Message{
+		a.state = a.updateOrAddTool(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Edit",
 			Display:  model.DisplayExpanded,
@@ -277,7 +290,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		stats := a.state.Stats
 		stats.FilesEdited++
 		a.state = a.state.WithStats(stats)
-		a.state = a.state.WithMessage(model.Message{
+		a.state = a.updateOrAddTool(model.Message{
 			Kind:     model.MsgTool,
 			ToolName: "Write",
 			Display:  model.DisplayExpanded,
@@ -373,6 +386,71 @@ func (a App) appendToLastTool(line string) model.State {
 		Stats:      a.state.Stats,
 		IsThinking: a.state.IsThinking,
 	}
+}
+
+// normalizeToolName converts tool name to Title Case for consistent display
+func normalizeToolName(name string) string {
+	switch strings.ToLower(name) {
+	case "shell":
+		return "Bash"
+	case "glob":
+		return "Glob"
+	case "read":
+		return "Read"
+	case "grep":
+		return "Grep"
+	case "write":
+		return "Write"
+	case "edit":
+		return "Edit"
+	default:
+		// Capitalize first letter
+		if len(name) > 0 {
+			return strings.ToUpper(name[:1]) + name[1:]
+		}
+		return name
+	}
+}
+
+// updateOrAddTool updates the last tool message if it's a pending tool call (empty content),
+// otherwise adds a new message. This enables Claude Code-style display where the tool
+// call is shown first with ⏺, then updated with output when complete.
+func (a *App) updateOrAddTool(m model.Message) model.State {
+	// Normalize tool name for consistent matching
+	m.ToolName = normalizeToolName(m.ToolName)
+
+	msgs := make([]model.Message, len(a.state.Messages))
+	copy(msgs, a.state.Messages)
+
+	// Look for the last tool message with the same tool name and empty content
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Kind == model.MsgTool && msgs[i].ToolName == m.ToolName && msgs[i].Content == "" {
+			// Update existing pending message
+			msgs[i] = model.Message{
+				Kind:     model.MsgTool,
+				ToolName: m.ToolName,
+				Display:  m.Display,
+				Content:  m.Content,
+				Summary:  m.Summary,
+			}
+			return model.State{
+				Version:          a.state.Version,
+				Tasks:            a.state.Tasks,
+				ActiveTask:       a.state.ActiveTask,
+				Model:            a.state.Model,
+				Messages:         msgs,
+				ShowTaskSelector: a.state.ShowTaskSelector,
+				WorkDir:          a.state.WorkDir,
+				RepoURL:          a.state.RepoURL,
+				Stats:            a.state.Stats,
+				IsThinking:       a.state.IsThinking,
+				MouseEnabled:     a.state.MouseEnabled,
+			}
+		}
+	}
+
+	// No pending message found, add new one
+	return a.state.WithMessage(m)
 }
 
 func (a *App) updateViewport() {

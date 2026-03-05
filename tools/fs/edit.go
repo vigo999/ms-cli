@@ -15,11 +15,20 @@ import (
 // EditTool edits file contents by replacing text.
 type EditTool struct {
 	workDir string
+	schema  tools.Schema
 }
 
 // NewEditTool creates a new edit tool.
 func NewEditTool(workDir string) *EditTool {
-	return &EditTool{workDir: workDir}
+	return &EditTool{
+		workDir: workDir,
+		schema: tools.NewSchema().
+			String("path", "Relative path to the file to edit").
+			String("old_string", "Exact text to replace (must match exactly including whitespace and newlines)").
+			String("new_string", "New text to replace the old_string with").
+			Required("path", "old_string", "new_string").
+			Build(),
+	}
 }
 
 // Name returns the tool name.
@@ -34,24 +43,12 @@ func (t *EditTool) Description() string {
 
 // Schema returns the tool parameter schema.
 func (t *EditTool) Schema() llm.ToolSchema {
-	return llm.ToolSchema{
-		Type: "object",
-		Properties: map[string]llm.Property{
-			"path": {
-				Type:        "string",
-				Description: "Relative path to the file to edit",
-			},
-			"old_string": {
-				Type:        "string",
-				Description: "Exact text to replace (must match exactly including whitespace and newlines)",
-			},
-			"new_string": {
-				Type:        "string",
-				Description: "New text to replace the old_string with",
-			},
-		},
-		Required: []string{"path", "old_string", "new_string"},
-	}
+	return tools.ToLLMToolSchema(t.schema)
+}
+
+// Validate validates the parameters against the schema.
+func (t *EditTool) Validate(params json.RawMessage) []tools.ValidationError {
+	return tools.ValidateAgainstSchema(params, t.schema)
 }
 
 type editParams struct {
@@ -62,6 +59,11 @@ type editParams struct {
 
 // Execute executes the edit tool.
 func (t *EditTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	// Validate parameters first
+	if errs := t.Validate(params); len(errs) > 0 {
+		return tools.ErrorResultf("validation failed: %v", errs), nil
+	}
+
 	var p editParams
 	if err := tools.ParseParams(params, &p); err != nil {
 		return tools.ErrorResult(err), nil

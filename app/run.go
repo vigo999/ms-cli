@@ -220,6 +220,13 @@ func (a *Application) convertEvent(ev loop.Event) *model.Event {
 			Message:  ev.Message,
 		}
 
+	case loop.EventToolCallStart:
+		return &model.Event{
+			Type:     model.ToolCallStart,
+			Message:  ev.Message,
+			ToolName: ev.ToolName,
+		}
+
 	default:
 		// Map other events to AgentReply
 		if ev.Message != "" {

@@ -1,0 +1,43 @@
+Search for patterns in files using regular expressions. Returns matching lines with file names and line numbers.
+
+## When to use
+- Searching for specific text across multiple files
+- Finding all occurrences of a function or variable
+- Searching for TODOs or FIXMEs
+- Finding where a specific pattern is used
+
+## When NOT to use
+- Do NOT use for listing files (use `glob` instead)
+- Do NOT use for reading file contents (use `read` instead)
+- Do NOT use for simple string replacement (use `edit` instead)
+
+## Parameters
+- `pattern` (string, required): Regular expression pattern to search for
+  - Use `(?i)` prefix for case-insensitive search (e.g., "(?i)todo")
+  - Supports Go regular expression syntax
+- `path` (string, optional): Directory or file to search in (default: current directory)
+- `include` (string, optional): File pattern to include using glob syntax (e.g., '*.go', '*.md')
+- `case_sensitive` (boolean, optional): Whether the search is case sensitive (default: true)
+
+## Examples
+
+Search for a function:
+```json
+{"pattern": "func main", "include": "*.go"}
+```
+
+Case-insensitive search for TODO:
+```json
+{"pattern": "TODO|FIXME", "case_sensitive": false}
+```
+
+Search in specific directory:
+```json
+{"pattern": "config", "path": "internal", "include": "*.go"}
+```
+
+## Regular Expression Tips
+- `func \w+` - Match function definitions
+- `TODO|FIXME` - Match either TODO or FIXME
+- `^import` - Match lines starting with "import"
+- `defer .+\(\)` - Match defer statements

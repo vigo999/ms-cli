@@ -15,11 +15,19 @@ import (
 // WriteTool writes or creates file contents.
 type WriteTool struct {
 	workDir string
+	schema  tools.Schema
 }
 
 // NewWriteTool creates a new write tool.
 func NewWriteTool(workDir string) *WriteTool {
-	return &WriteTool{workDir: workDir}
+	return &WriteTool{
+		workDir: workDir,
+		schema: tools.NewSchema().
+			String("path", "Relative path to the file to write").
+			String("content", "Content to write to the file").
+			Required("path", "content").
+			Build(),
+	}
 }
 
 // Name returns the tool name.
@@ -34,20 +42,12 @@ func (t *WriteTool) Description() string {
 
 // Schema returns the tool parameter schema.
 func (t *WriteTool) Schema() llm.ToolSchema {
-	return llm.ToolSchema{
-		Type: "object",
-		Properties: map[string]llm.Property{
-			"path": {
-				Type:        "string",
-				Description: "Relative path to the file to write",
-			},
-			"content": {
-				Type:        "string",
-				Description: "Content to write to the file",
-			},
-		},
-		Required: []string{"path", "content"},
-	}
+	return tools.ToLLMToolSchema(t.schema)
+}
+
+// Validate validates the parameters against the schema.
+func (t *WriteTool) Validate(params json.RawMessage) []tools.ValidationError {
+	return tools.ValidateAgainstSchema(params, t.schema)
 }
 
 type writeParams struct {
@@ -57,6 +57,11 @@ type writeParams struct {
 
 // Execute executes the write tool.
 func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	// Validate parameters first
+	if errs := t.Validate(params); len(errs) > 0 {
+		return tools.ErrorResultf("validation failed: %v", errs), nil
+	}
+
 	var p writeParams
 	if err := tools.ParseParams(params, &p); err != nil {
 		return tools.ErrorResult(err), nil
@@ -75,16 +80,16 @@ func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 		return tools.ErrorResultf("path escapes working directory: %s", p.Path), nil
 	}
 
-	// Ensure parent directory exists
-	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return tools.ErrorResultf("create directory: %w", err), nil
-	}
-
 	// Check if file already exists
 	exists := false
 	if _, err := os.Stat(fullPath); err == nil {
 		exists = true
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(fullPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return tools.ErrorResultf("create directory: %w", err), nil
 	}
 
 	// Write file

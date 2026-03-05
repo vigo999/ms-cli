@@ -14,11 +14,19 @@ import (
 // ShellTool wraps shell execution as a Tool.
 type ShellTool struct {
 	runner *Runner
+	schema tools.Schema
 }
 
 // NewShellTool creates a new shell tool.
 func NewShellTool(runner *Runner) *ShellTool {
-	return &ShellTool{runner: runner}
+	return &ShellTool{
+		runner: runner,
+		schema: tools.NewSchema().
+			String("command", "The shell command to execute (e.g., 'go test ./...', 'git status')").
+			Int("timeout", "Timeout in seconds (default: 60, max: 1800)").
+			Required("command").
+			Build(),
+	}
 }
 
 // Name returns the tool name.
@@ -33,20 +41,12 @@ func (t *ShellTool) Description() string {
 
 // Schema returns the tool parameter schema.
 func (t *ShellTool) Schema() llm.ToolSchema {
-	return llm.ToolSchema{
-		Type: "object",
-		Properties: map[string]llm.Property{
-			"command": {
-				Type:        "string",
-				Description: "The shell command to execute (e.g., 'go test ./...', 'git status')",
-			},
-			"timeout": {
-				Type:        "integer",
-				Description: "Timeout in seconds (default: 60, max: 1800)",
-			},
-		},
-		Required: []string{"command"},
-	}
+	return tools.ToLLMToolSchema(t.schema)
+}
+
+// Validate validates the parameters against the schema.
+func (t *ShellTool) Validate(params json.RawMessage) []tools.ValidationError {
+	return tools.ValidateAgainstSchema(params, t.schema)
 }
 
 type shellParams struct {
@@ -56,6 +56,11 @@ type shellParams struct {
 
 // Execute executes the shell tool.
 func (t *ShellTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	// Validate parameters first
+	if errs := t.Validate(params); len(errs) > 0 {
+		return tools.ErrorResultf("validation failed: %v", errs), nil
+	}
+
 	var p shellParams
 	if err := tools.ParseParams(params, &p); err != nil {
 		return tools.ErrorResult(err), nil
@@ -79,8 +84,9 @@ func (t *ShellTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 		return tools.ErrorResultf("execute command: %w", err), nil
 	}
 
-	// Build output
+	// Build output with command for UI display
 	var parts []string
+	// Include command at the beginning for clarity
 	parts = append(parts, fmt.Sprintf("$ %s", command))
 
 	if result.Stdout != "" {
@@ -90,8 +96,6 @@ func (t *ShellTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 	if result.Stderr != "" {
 		parts = append(parts, fmt.Sprintf("[stderr]\n%s", result.Stderr))
 	}
-
-	parts = append(parts, fmt.Sprintf("exit status %d", result.ExitCode))
 
 	output := strings.Join(parts, "\n")
 

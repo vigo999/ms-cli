@@ -1,0 +1,32 @@
+Create a new file or overwrite an existing file with new content.
+
+## When to use
+- Creating new source code files
+- Creating configuration files
+- Writing generated code or output
+- Creating documentation files
+
+## When NOT to use
+- Do NOT use for editing existing files (use `edit` instead)
+- Do NOT use for making small targeted changes (use `edit` instead)
+
+## Parameters
+- `path` (string, required): Relative path to the file to write
+- `content` (string, required): Content to write to the file
+
+## Examples
+
+Create a new file:
+```json
+{"path": "config.json", "content": "{\"key\": \"value\"}"}
+```
+
+Overwrite an existing file:
+```json
+{"path": "README.md", "content": "# New README\n\nThis is the content."}
+```
+
+## Notes
+- This tool will CREATE the file if it doesn't exist or OVERWRITE if it does
+- Parent directories are automatically created if they don't exist
+- Use with caution as it will completely replace existing file contents

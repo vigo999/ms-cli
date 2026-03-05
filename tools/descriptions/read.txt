@@ -1,0 +1,33 @@
+Read the contents of a file. Use this when you need to examine file contents.
+
+## When to use
+- Reading source code files
+- Reading configuration files
+- Examining existing file content before making changes
+- Checking file contents to understand the current state
+
+## When NOT to use
+- Do NOT use for searching across multiple files (use `grep` instead)
+- Do NOT use for listing files in a directory (use `glob` instead)
+
+## Parameters
+- `path` (string, required): Relative path to the file to read
+- `offset` (integer, optional): Line number to start reading from (1-indexed, 0 means from start)
+- `limit` (integer, optional): Maximum number of lines to read (0 means no limit)
+
+## Examples
+
+Read an entire file:
+```json
+{"path": "main.go"}
+```
+
+Read specific lines:
+```json
+{"path": "main.go", "offset": 10, "limit": 5}
+```
+
+## Notes
+- Always use relative paths from the project root
+- The tool returns the content and a summary with line count information
+- Use offset/limit for large files to avoid overwhelming the context

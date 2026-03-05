@@ -1,0 +1,40 @@
+Find files matching a glob pattern. Use this to explore project structure and find specific file types.
+
+## When to use
+- Finding all files of a certain type (e.g., all `.go` files)
+- Exploring project structure
+- Finding configuration files
+- Locating test files
+
+## When NOT to use
+- Do NOT use for searching file contents (use `grep` instead)
+- Do NOT use for reading file contents (use `read` instead)
+
+## Parameters
+- `pattern` (string, required): Glob pattern (e.g., '*.go', '**/*.yaml', 'cmd/*')
+  - `*` matches any characters except `/`
+  - `**/` prefix enables recursive search in all subdirectories
+- `path` (string, optional): Base directory to search from (default: current directory)
+
+## Examples
+
+Find all Go files in current directory:
+```json
+{"pattern": "*.go"}
+```
+
+Find all YAML files recursively:
+```json
+{"pattern": "**/*.yaml"}
+```
+
+Find files in a specific directory:
+```json
+{"pattern": "*.go", "path": "cmd"}
+```
+
+## Pattern Syntax
+- `*.go` - All `.go` files in the current directory
+- `**/*.go` - All `.go` files in any subdirectory
+- `cmd/*.go` - All `.go` files in the `cmd` directory
+- `test_*.py` - All Python files starting with `test_`

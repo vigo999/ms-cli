@@ -1,0 +1,49 @@
+Execute a shell command. Use this for running tests, building, git operations, etc.
+
+## When to use
+- Running tests (`go test`, `pytest`, etc.)
+- Building the project (`go build`, `make`, etc.)
+- Git operations (`git status`, `git diff`, etc.)
+- Package management (`npm install`, `go mod tidy`, etc.)
+- Running scripts or tools
+
+## When NOT to use
+- Do NOT use for reading files (use `read` instead)
+- Do NOT use for searching file contents (use `grep` instead)
+- Do NOT use for finding files (use `glob` instead)
+- Avoid using file manipulation commands (cat, grep, find, etc.)
+
+## Parameters
+- `command` (string, required): The shell command to execute
+- `timeout` (integer, optional): Timeout in seconds (default: 60, max: 1800)
+
+## Examples
+
+Run tests:
+```json
+{"command": "go test ./..."}
+```
+
+Check git status:
+```json
+{"command": "git status"}
+```
+
+Build with custom timeout:
+```json
+{"command": "make build", "timeout": 300}
+```
+
+## Security Notes
+- Commands run in the project working directory
+- Destructive operations may require confirmation
+- Commands have a timeout to prevent hanging
+- Use with caution when running commands that modify files
+
+## Recommended Commands
+- `go test ./...` - Run all Go tests
+- `go build ./...` - Build all packages
+- `git status` - Check repository status
+- `git diff` - Show changes
+- `npm test` - Run Node.js tests
+- `make` - Build using Makefile

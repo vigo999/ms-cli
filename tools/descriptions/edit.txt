@@ -1,0 +1,42 @@
+Edit a file by replacing specific text. Use this for making targeted changes to existing files.
+
+## When to use
+- Making small, precise changes to existing files
+- Fixing bugs by replacing specific code
+- Updating configuration values
+- Refactoring specific functions or sections
+
+## When NOT to use
+- Do NOT use for creating new files (use `write` instead)
+- Do NOT use when the old_string appears multiple times in the file
+
+## Parameters
+- `path` (string, required): Relative path to the file to edit
+- `old_string` (string, required): Exact text to replace (must match exactly including whitespace and newlines)
+- `new_string` (string, required): New text to replace the old_string with
+
+## Examples
+
+Replace a function:
+```json
+{
+  "path": "main.go",
+  "old_string": "func oldFunc() {\n    return 1\n}",
+  "new_string": "func newFunc() {\n    return 2\n}"
+}
+```
+
+Update a configuration value:
+```json
+{
+  "path": "config.yaml",
+  "old_string": "timeout: 30",
+  "new_string": "timeout: 60"
+}
+```
+
+## Critical Notes
+- The `old_string` MUST match EXACTLY, including all whitespace, indentation, and newlines
+- If old_string appears multiple times in the file, the operation will fail
+- Always read the file first to ensure you have the exact text to replace
+- For multi-line replacements, include the full lines with proper indentation

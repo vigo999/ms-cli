@@ -65,6 +65,25 @@ var (
 	diffNeutralStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("250")).
 				PaddingLeft(2)
+
+	// Claude Code-style tool call styles
+	toolCallIconStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("39")) // blue ⏺
+
+	toolCallNameStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("252")).
+				Bold(true)
+
+	toolCallArgsStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244"))
+
+	toolOutputIconStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("39")).
+				PaddingLeft(2)
+
+	toolOutputStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("250")).
+				PaddingLeft(2)
 )
 
 // RenderMessages converts messages into styled text for the viewport.
@@ -162,16 +181,31 @@ func renderTool(m model.Message) string {
 }
 
 // --- Collapsed: single dim line ---
-// "  ▸ Read model/layer3.go — 42 lines"
-// "  ▸ Grep "allocTensor" — 5 matches"
+// "  ⏺ Read(path) — 42 lines"
+// "  ⏺ Grep(pattern) — 5 matches"
 func renderCollapsedTool(m model.Message) string {
+	args := m.Content
+	if args == "" {
+		args = m.Summary
+	}
+
 	summary := ""
-	if m.Summary != "" {
+	if m.Summary != "" && m.Summary != args {
 		summary = " — " + collapsedSummaryStyle.Render(m.Summary)
 	}
-	return fmt.Sprintf("  %s %s%s",
-		collapsedIconStyle.Render("▸"),
-		collapsedNameStyle.Render(m.ToolName+" "+m.Content),
+
+	if args != "" {
+		return fmt.Sprintf("%s %s(%s)%s",
+			toolCallIconStyle.Render("⏺"),
+			collapsedNameStyle.Render(m.ToolName),
+			toolCallArgsStyle.Render(args),
+			summary,
+		)
+	}
+
+	return fmt.Sprintf("%s %s%s",
+		toolCallIconStyle.Render("⏺"),
+		collapsedNameStyle.Render(m.ToolName),
 		summary,
 	)
 }
@@ -180,23 +214,174 @@ func renderCollapsedTool(m model.Message) string {
 func renderExpandedTool(m model.Message) string {
 	// edit/write get diff rendering
 	if m.ToolName == "Edit" || m.ToolName == "Write" {
-		return renderDiffTool(m)
+		return renderClaudeStyleDiffTool(m)
 	}
 
-	header := fmt.Sprintf("  %s %s %s",
-		toolBorderStyle.Render("▸"),
-		toolHeaderStyle.Render(m.ToolName),
-		toolBorderStyle.Render(strings.Repeat("─", 50)),
-	)
+	return renderClaudeStyleTool(m)
+}
 
+// renderClaudeStyleTool renders a tool call in Claude Code style:
+// ⏺ ToolName(args...)
+//   ⎿ output...
+func renderClaudeStyleTool(m model.Message) string {
+	var parts []string
+
+	// Header line: ⏺ ToolName(args)
+	args := m.Summary
+	if args == "" && m.Content != "" {
+		// For read tool, content is already the summary (e.g., "Read 36 lines")
+		if m.ToolName == "Read" {
+			args = ""
+		} else {
+			// Try to extract first line as args if Summary is empty
+			lines := strings.Split(m.Content, "\n")
+			if len(lines) > 0 {
+				args = strings.TrimPrefix(lines[0], "$ ")
+			}
+		}
+	}
+
+	if args != "" {
+		// Format: ⏺ ToolName(args)
+		header := fmt.Sprintf("%s %s(%s)",
+			toolCallIconStyle.Render("⏺"),
+			toolCallNameStyle.Render(m.ToolName),
+			toolCallArgsStyle.Render(args),
+		)
+		parts = append(parts, header)
+	} else {
+		// Format: ⏺ ToolName
+		header := fmt.Sprintf("%s %s",
+			toolCallIconStyle.Render("⏺"),
+			toolCallNameStyle.Render(m.ToolName),
+		)
+		parts = append(parts, header)
+	}
+
+	// Output lines: ⎿ output
+	if m.Content != "" {
+		// For Read tool, content is already formatted as "Read X lines", display directly
+		if m.ToolName == "Read" {
+			parts = append(parts, toolOutputIconStyle.Render("⎿")+"  "+toolOutputStyle.Render(m.Content))
+			return strings.Join(parts, "\n")
+		}
+
+		lines := strings.Split(m.Content, "\n")
+
+		// Calculate visible lines
+		visibleLines := []string{}
+		for _, line := range lines {
+			// Skip exit status line at the end
+			if strings.HasPrefix(line, "exit status ") {
+				continue
+			}
+			visibleLines = append(visibleLines, line)
+		}
+
+		// Fold long output (show first 10 lines, then "… +N lines")
+		const maxVisibleLines = 10
+		foldThreshold := maxVisibleLines
+		shouldFold := len(visibleLines) > foldThreshold+3 // Only fold if significantly longer
+
+		displayLines := visibleLines
+		foldedCount := 0
+		if shouldFold {
+			displayLines = visibleLines[:foldThreshold]
+			foldedCount = len(visibleLines) - foldThreshold
+		}
+
+		// Render output lines
+		for i, line := range displayLines {
+			if strings.TrimSpace(line) == "" {
+				parts = append(parts, "  ")
+			} else if i == 0 {
+				// First line gets ⎿
+				parts = append(parts, toolOutputIconStyle.Render("⎿")+" "+toolOutputStyle.Render(line))
+			} else {
+				// Subsequent lines get indentation
+				parts = append(parts, "   "+toolOutputStyle.Render(line))
+			}
+		}
+
+		// Add fold indicator if needed
+		if foldedCount > 0 {
+			foldStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
+			parts = append(parts, "   "+foldStyle.Render(fmt.Sprintf("… +%d lines", foldedCount)))
+		}
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// renderClaudeStyleDiffTool renders edit/write in Claude Code style with diff coloring
+func renderClaudeStyleDiffTool(m model.Message) string {
+	var parts []string
+
+	// Header: ⏺ Edit(path) or ⏺ Write(path)
+	args := m.Summary
+	if args == "" {
+		// Try to extract path from content
+		lines := strings.Split(m.Content, "\n")
+		if len(lines) > 0 {
+			args = strings.TrimPrefix(lines[0], "Edited: ")
+			args = strings.TrimPrefix(args, "Created: ")
+			args = strings.TrimPrefix(args, "Updated: ")
+			args = strings.TrimSpace(args)
+		}
+	}
+
+	if args != "" {
+		header := fmt.Sprintf("%s %s(%s)",
+			toolCallIconStyle.Render("⏺"),
+			toolCallNameStyle.Render(m.ToolName),
+			toolCallArgsStyle.Render(args),
+		)
+		parts = append(parts, header)
+	} else {
+		header := fmt.Sprintf("%s %s",
+			toolCallIconStyle.Render("⏺"),
+			toolCallNameStyle.Render(m.ToolName),
+		)
+		parts = append(parts, header)
+	}
+
+	// Diff content with coloring
 	lines := strings.Split(m.Content, "\n")
-	styled := make([]string, len(lines))
-	for i, line := range lines {
-		styled[i] = toolContentStyle.Render(line)
+	firstOutput := true
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "+"):
+			if firstOutput {
+				parts = append(parts, toolOutputIconStyle.Render("⎿")+" "+diffAddStyle.Render(line))
+				firstOutput = false
+			} else {
+				parts = append(parts, "   "+diffAddStyle.Render(line))
+			}
+		case strings.HasPrefix(trimmed, "-"):
+			if firstOutput {
+				parts = append(parts, toolOutputIconStyle.Render("⎿")+" "+diffRemoveStyle.Render(line))
+				firstOutput = false
+			} else {
+				parts = append(parts, "   "+diffRemoveStyle.Render(line))
+			}
+		default:
+			// Skip the "Edited: path" or "Created: path" header line in content
+			if strings.HasPrefix(line, "Edited:") || strings.HasPrefix(line, "Created:") || strings.HasPrefix(line, "Updated:") {
+				continue
+			}
+			if strings.TrimSpace(line) == "" {
+				parts = append(parts, "")
+			} else if firstOutput {
+				parts = append(parts, toolOutputIconStyle.Render("⎿")+" "+diffNeutralStyle.Render(line))
+				firstOutput = false
+			} else {
+				parts = append(parts, "   "+diffNeutralStyle.Render(line))
+			}
+		}
 	}
-	body := strings.Join(styled, "\n")
 
-	return header + "\n" + body
+	return strings.Join(parts, "\n")
 }
 
 // --- Diff: edit/write with +/- coloring ---

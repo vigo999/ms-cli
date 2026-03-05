@@ -15,11 +15,19 @@ import (
 // GlobTool finds files matching a glob pattern.
 type GlobTool struct {
 	workDir string
+	schema  tools.Schema
 }
 
 // NewGlobTool creates a new glob tool.
 func NewGlobTool(workDir string) *GlobTool {
-	return &GlobTool{workDir: workDir}
+	return &GlobTool{
+		workDir: workDir,
+		schema: tools.NewSchema().
+			String("pattern", "Glob pattern (e.g., '*.go', '**/*.yaml', 'cmd/*')").
+			String("path", "Base directory to search from (default: current directory)").
+			Required("pattern").
+			Build(),
+	}
 }
 
 // Name returns the tool name.
@@ -34,20 +42,12 @@ func (t *GlobTool) Description() string {
 
 // Schema returns the tool parameter schema.
 func (t *GlobTool) Schema() llm.ToolSchema {
-	return llm.ToolSchema{
-		Type: "object",
-		Properties: map[string]llm.Property{
-			"pattern": {
-				Type:        "string",
-				Description: "Glob pattern (e.g., '*.go', '**/*.yaml', 'cmd/*')",
-			},
-			"path": {
-				Type:        "string",
-				Description: "Base directory to search from (default: current directory)",
-			},
-		},
-		Required: []string{"pattern"},
-	}
+	return tools.ToLLMToolSchema(t.schema)
+}
+
+// Validate validates the parameters against the schema.
+func (t *GlobTool) Validate(params json.RawMessage) []tools.ValidationError {
+	return tools.ValidateAgainstSchema(params, t.schema)
 }
 
 type globParams struct {
@@ -57,6 +57,11 @@ type globParams struct {
 
 // Execute executes the glob tool.
 func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
+	// Validate parameters first
+	if errs := t.Validate(params); len(errs) > 0 {
+		return tools.ErrorResultf("validation failed: %v", errs), nil
+	}
+
 	var p globParams
 	if err := tools.ParseParams(params, &p); err != nil {
 		return tools.ErrorResult(err), nil

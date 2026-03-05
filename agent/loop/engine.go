@@ -428,6 +428,10 @@ func (ex *executor) handleResponse(ctx context.Context, resp *llm.CompletionResp
 // executeToolCall executes a single tool call.
 func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error {
 	toolName := tc.Function.Name
+	ex.engine.writeTrace("tool_call_start", map[string]any{
+		"tool": toolName,
+		"args": string(tc.Function.Arguments),
+	})
 
 	// Find tool
 	tool, ok := ex.engine.tools.Get(toolName)
@@ -435,9 +439,18 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		errMsg := fmt.Sprintf("Tool not found: %s", toolName)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
 		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
+		ex.engine.writeTrace("tool_not_found", map[string]any{"tool": toolName})
 		return nil
 	}
-	ex.engine.writeTrace("tool_call", tc)
+	ex.engine.writeTrace("tool_found", map[string]any{"tool": toolName})
+
+	// Format arguments for display
+	argsDisplay := formatToolArgs(toolName, tc.Function.Arguments)
+
+	// Send ToolCallStart event for UI display
+	startEv := NewEvent(EventToolCallStart, argsDisplay)
+	startEv.ToolName = toolName
+	ex.addEvent(startEv)
 
 	// Check permission
 	action := string(tc.Function.Arguments)
@@ -467,10 +480,14 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		return nil
 	}
 
-	// Add event
-	ex.addEvent(NewEvent(EventToolStarted, fmt.Sprintf("Using tool: %s", toolName)))
+	// Inject PermissionChecker into context for tools to use
+	ctx = tools.WithPermissionChecker(ctx, &enginePermissionAdapter{service: ex.engine.permission})
 
 	// Execute tool
+	ex.engine.writeTrace("tool_execute", map[string]any{
+		"tool":    toolName,
+		"call_id": tc.ID,
+	})
 	result, err := tool.Execute(ctx, tc.Function.Arguments)
 	if err != nil {
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
@@ -483,6 +500,11 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		})
 		return nil
 	}
+	ex.engine.writeTrace("tool_execute_complete", map[string]any{
+		"tool":    toolName,
+		"call_id": tc.ID,
+		"success": result.Error == nil,
+	})
 
 	// Handle error result
 	if result.Error != nil {
@@ -504,7 +526,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	})
 
 	// Add tool event based on tool type
-	ex.addToolEvent(toolName, result)
+	ex.addToolEvent(toolName, result, tc.Function.Arguments)
 
 	// Add tool result to context
 	ex.engine.ctxManager.AddToolResult(tc.ID, result.Content)
@@ -513,7 +535,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 }
 
 // addToolEvent adds an event based on tool type.
-func (ex *executor) addToolEvent(toolName string, result *tools.Result) {
+func (ex *executor) addToolEvent(toolName string, result *tools.Result, args json.RawMessage) {
 	eventType := EventToolStarted
 	switch toolName {
 	case "read":
@@ -530,9 +552,22 @@ func (ex *executor) addToolEvent(toolName string, result *tools.Result) {
 		eventType = EventCmdStarted
 	}
 
-	ev := NewEvent(eventType, result.Content)
+	// For read tool, show summary in UI instead of full content
+	// LLM still gets full content via AddToolResult
+	displayContent := result.Content
+	summary := result.Summary
+	if toolName == "read" && result.Summary != "" {
+		displayContent = "Read " + result.Summary
+		// Extract path from args for display
+		path := formatToolArgs("read", args)
+		if path != "" {
+			summary = path
+		}
+	}
+
+	ev := NewEvent(eventType, displayContent)
 	ev.ToolName = toolName
-	ev.Summary = result.Summary
+	ev.Summary = summary
 	ex.addEvent(ev)
 }
 
@@ -550,26 +585,36 @@ func (ex *executor) addEvent(ev Event) {
 
 // defaultSystemPrompt returns the default system prompt.
 func defaultSystemPrompt() string {
-	return `You are an AI assistant that helps users with software development tasks.
+	return `You are an AI assistant with access to tools. Your job is to help users by CALLING TOOLS - not by talking about calling them.
 
-You have access to the following tools:
+AVAILABLE TOOLS:
+- shell: Execute shell commands (ls, find, cat, etc.)
+- glob: Find files by pattern (e.g., "*.go")
 - read: Read file contents
-- write: Create or overwrite files
-- edit: Edit files by replacing text
-- grep: Search for patterns in files
-- glob: Find files matching patterns
-- shell: Execute shell commands
+- grep: Search text patterns
+- write: Create new files
+- edit: Modify existing files
 
-Guidelines:
-1. Use tools to gather information before making changes
-2. Always read files before editing them
-3. Make minimal, focused changes
-4. Use grep and glob to explore the codebase
-5. Run tests with shell to verify changes
+RULES - OBEY THESE STRICTLY:
 
-IMPORTANT: When you have gathered enough information to answer the user's question, you MUST provide your final answer directly WITHOUT using any more tools. Do not keep calling tools indefinitely - provide a clear, concise response once you have the information needed.
+1. NEVER say "I'll check" or "Let me look" - JUST CALL THE TOOL.
+2. NEVER apologize or explain why you need to use a tool.
+3. When user asks about files/directories → IMMEDIATELY call shell("ls -la") or glob("*")
+4. When user asks about code → IMMEDIATELY call grep or read
+5. NO EMPTY RESPONSES - if you don't know, use a tool to find out.
+6. ONE tool call at a time, then wait for results.
 
-When making edits, ensure the old_string matches exactly (including whitespace and newlines).`
+CORRECT RESPONSES:
+- User: "List files" → shell("ls -la")
+- User: "Find Go files" → glob("**/*.go")
+- User: "What's in main.go?" → read("main.go")
+
+INCORRECT RESPONSES (NEVER DO THIS):
+- "I'll help you list the files"
+- "Let me check the directory structure"
+- "I need to use shell to see what's there"
+
+REMEMBER: Actions only. No talking about actions.`
 }
 
 // SetExecutorRun sets the executor run function (for backward compatibility).
@@ -635,4 +680,75 @@ func (a *toolAdapter) Execute(ctx context.Context, params map[string]any) (strin
 	}
 
 	return result.Content, nil
+}
+
+// formatToolArgs formats tool arguments for display in the UI.
+func formatToolArgs(toolName string, args json.RawMessage) string {
+	var argsMap map[string]any
+	if err := json.Unmarshal(args, &argsMap); err != nil {
+		return string(args)
+	}
+
+	// Format based on tool type
+	switch toolName {
+	case "shell":
+		if cmd, ok := argsMap["command"].(string); ok {
+			return cmd
+		}
+	case "read", "glob":
+		if path, ok := argsMap["path"].(string); ok {
+			return path
+		}
+	case "grep":
+		pattern, _ := argsMap["pattern"].(string)
+		path, _ := argsMap["path"].(string)
+		if pattern != "" && path != "" {
+			return fmt.Sprintf("%s  %s", pattern, path)
+		}
+		if pattern != "" {
+			return pattern
+		}
+	case "write":
+		if path, ok := argsMap["path"].(string); ok {
+			return path
+		}
+	case "edit":
+		if path, ok := argsMap["path"].(string); ok {
+			return path
+		}
+	}
+
+	// Default: show all args as key=value
+	if len(argsMap) == 1 {
+		for _, v := range argsMap {
+			if s, ok := v.(string); ok {
+				return s
+			}
+		}
+	}
+
+	// Build compact representation
+	var parts []string
+	for k, v := range argsMap {
+		if s, ok := v.(string); ok {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, s))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// enginePermissionAdapter adapts PermissionService to tools.PermissionChecker
+type enginePermissionAdapter struct {
+	service PermissionService
+}
+
+func (a *enginePermissionAdapter) CheckPermission(ctx context.Context, operation, resource string) (bool, error) {
+	// Use the service's Check method if available, otherwise return false to trigger AskPermission
+	return false, nil
+}
+
+func (a *enginePermissionAdapter) AskPermission(ctx context.Context, operation, resource, reason string) (bool, error) {
+	// The outer permission check in executeToolCall already handles user confirmation
+	// This adapter allows tools to request permission through the same service
+	return a.service.Request(ctx, operation, resource, "")
 }
