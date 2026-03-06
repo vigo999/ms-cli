@@ -40,6 +40,7 @@ func (m *Manager) Create(name, workDir string) (*Session, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	session.ID = m.nextAvailableIDLocked(session.ID)
 
 	if err := m.store.Save(session); err != nil {
 		return nil, fmt.Errorf("save session: %w", err)
@@ -47,6 +48,23 @@ func (m *Manager) Create(name, workDir string) (*Session, error) {
 
 	m.sessions[session.ID] = session
 	return session, nil
+}
+
+func (m *Manager) nextAvailableIDLocked(base ID) ID {
+	candidate := base
+	suffix := 2
+	for m.idExistsLocked(candidate) {
+		candidate = ID(fmt.Sprintf("%s-%d", base, suffix))
+		suffix++
+	}
+	return candidate
+}
+
+func (m *Manager) idExistsLocked(id ID) bool {
+	if _, ok := m.sessions[id]; ok {
+		return true
+	}
+	return m.store.Exists(id)
 }
 
 // CreateFromMessages 从消息创建会话
@@ -477,4 +495,92 @@ func (m *Manager) SetCurrentWorkDir(workDir string) error {
 		return m.store.Save(m.current)
 	}
 	return nil
+}
+
+// UpdateCurrentRuntime updates runtime snapshot of current session.
+func (m *Manager) UpdateCurrentRuntime(runtime RuntimeSnapshot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.current == nil {
+		return fmt.Errorf("no current session")
+	}
+
+	normalizePermissionSnapshot(&runtime.Permission)
+	m.current.Runtime = runtime
+	m.current.UpdatedAt = time.Now()
+
+	if m.config.AutoSave {
+		return m.store.Save(m.current)
+	}
+	return nil
+}
+
+// SetCurrentTracePath updates trace path in current runtime snapshot.
+func (m *Manager) SetCurrentTracePath(tracePath string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.current == nil {
+		return fmt.Errorf("no current session")
+	}
+
+	normalizePermissionSnapshot(&m.current.Runtime.Permission)
+	m.current.Runtime.TracePath = tracePath
+	m.current.UpdatedAt = time.Now()
+
+	if m.config.AutoSave {
+		return m.store.Save(m.current)
+	}
+	return nil
+}
+
+// UpdateCurrentModel updates model snapshot in current runtime snapshot.
+func (m *Manager) UpdateCurrentModel(model ModelSnapshot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.current == nil {
+		return fmt.Errorf("no current session")
+	}
+
+	normalizePermissionSnapshot(&m.current.Runtime.Permission)
+	m.current.Runtime.Model = model
+	m.current.UpdatedAt = time.Now()
+
+	if m.config.AutoSave {
+		return m.store.Save(m.current)
+	}
+	return nil
+}
+
+// UpdateCurrentPermission updates permission snapshot in current runtime snapshot.
+func (m *Manager) UpdateCurrentPermission(snapshot PermissionSnapshot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.current == nil {
+		return fmt.Errorf("no current session")
+	}
+
+	normalizePermissionSnapshot(&snapshot)
+	m.current.Runtime.Permission = snapshot
+	m.current.UpdatedAt = time.Now()
+
+	if m.config.AutoSave {
+		return m.store.Save(m.current)
+	}
+	return nil
+}
+
+func normalizePermissionSnapshot(snapshot *PermissionSnapshot) {
+	if snapshot.ToolPolicies == nil {
+		snapshot.ToolPolicies = make(map[string]string)
+	}
+	if snapshot.CommandPolicies == nil {
+		snapshot.CommandPolicies = make(map[string]string)
+	}
+	if snapshot.PathPolicies == nil {
+		snapshot.PathPolicies = make([]PathPolicySnapshot, 0)
+	}
 }

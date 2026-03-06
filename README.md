@@ -54,7 +54,9 @@ In TUI input, use slash commands:
 ### Model Commands
 - `/model` - Show current model configuration
 - `/model <model-name>` - Switch to a new model
-- `/model <openai:model>` - Backward-compatible provider prefix format (e.g., `/model openai:gpt-4o-mini`)
+- `/model <openai:model>` - OpenAI protocol model (e.g., `/model openai:gpt-4o-mini`)
+- `/model <anthropic:model>` - Anthropic protocol model (e.g., `/model anthropic:claude-3-5-sonnet-latest`)
+- `/model key <API_KEY>` - Update API key at runtime
 
 ### Session Commands
 - `/compact` - Compact conversation context to save tokens
@@ -116,7 +118,8 @@ ms-cli/
 ├── agent/
 │   ├── loop/                   # engine, task/event types, permissions
 │   ├── context/                # budget, compaction, context manager
-│   └── memory/                 # policy, store, retrieve
+│   ├── memory/                 # policy, store, retrieve
+│   └── session/                # session persistence + trajectory writer
 ├── executor/
 │   └── runner.go               # pluggable task executor
 ├── integrations/
@@ -129,8 +132,6 @@ ms-cli/
 ├── tools/
 │   ├── fs/                     # filesystem operations
 │   └── shell/                  # shell command runner
-├── trace/
-│   └── writer.go               # execution trace logging
 ├── report/
 │   └── summary.go              # report generation
 ├── ui/
@@ -157,17 +158,27 @@ Configuration can be provided via:
 
 | Variable | Description |
 |----------|-------------|
-| `MSCLI_BASE_URL` | OpenAI-compatible API base URL (higher priority) |
-| `MSCLI_MODEL` | Model name |
-| `MSCLI_API_KEY` | API key (higher priority) |
-| `OPENAI_BASE_URL` | API base URL (fallback) |
-| `OPENAI_MODEL` | Model name (fallback) |
-| `OPENAI_API_KEY` | API key (fallback) |
+| `MSCLI_PROTOCOL` | Protocol override: `openai` or `anthropic` |
+| `MSCLI_BASE_URL` | API base URL (highest priority) |
+| `MSCLI_MODEL` | Model name (highest priority) |
+| `MSCLI_API_KEY` | API key (highest priority) |
+| `OPENAI_BASE_URL` | OpenAI base URL (provider fallback) |
+| `OPENAI_MODEL` | OpenAI model (provider fallback) |
+| `OPENAI_API_KEY` | OpenAI API key (provider fallback) |
+| `ANTHROPIC_BASE_URL` | Anthropic base URL (provider fallback) |
+| `ANTHROPIC_MODEL` | Anthropic model (provider fallback) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (provider fallback) |
+
+Auto protocol selection when `MSCLI_PROTOCOL` is unset:
+1. If `OPENAI_BASE_URL` + `OPENAI_MODEL` + `OPENAI_API_KEY` are all set, use `openai`.
+2. Else if `ANTHROPIC_BASE_URL` + `ANTHROPIC_MODEL` + `ANTHROPIC_API_KEY` are all set, use `anthropic`.
+3. Else keep config/default protocol (`openai` by default).
 
 ### Example Config File
 
 ```yaml
 model:
+  protocol: openai
   url: https://api.openai.com/v1
   model: gpt-4o-mini
   key: ""

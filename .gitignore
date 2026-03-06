@@ -12,4 +12,4 @@ ms-cli
 
 # ms-cli local state
 .mscli/
-/.cache
+.cache/

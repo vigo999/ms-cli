@@ -12,7 +12,6 @@ import (
 	"github.com/vigo999/ms-cli/integrations/llm"
 	"github.com/vigo999/ms-cli/permission"
 	"github.com/vigo999/ms-cli/tools"
-	"github.com/vigo999/ms-cli/trace"
 )
 
 // EngineConfig holds engine configuration.
@@ -34,7 +33,8 @@ type Engine struct {
 	tools      *tools.Registry
 	ctxManager *ctxmanager.Manager
 	permission permission.PermissionService
-	trace      trace.Writer
+	trace      TraceWriter
+	msgSink    MessageSink
 
 	// Plan Mode 组件
 	planner      *plan.Planner
@@ -118,8 +118,13 @@ func (e *Engine) SetRunMode(mode plan.RunMode) {
 }
 
 // SetTraceWriter sets the trace writer.
-func (e *Engine) SetTraceWriter(w trace.Writer) {
+func (e *Engine) SetTraceWriter(w TraceWriter) {
 	e.trace = w
+}
+
+// SetMessageSink sets the message persistence hook.
+func (e *Engine) SetMessageSink(sink MessageSink) {
+	e.msgSink = sink
 }
 
 // Run executes a task and returns events.
@@ -321,10 +326,20 @@ type executor struct {
 	totalUsage llm.Usage
 }
 
+// MessageSink persists chat messages generated during execution.
+type MessageSink func(msg llm.Message) error
+
+// TraceWriter is the minimal trace sink used by the loop engine.
+type TraceWriter interface {
+	Write(eventType string, payload any) error
+}
+
 // run executes the ReAct loop.
 func (ex *executor) run(ctx context.Context) ([]Event, error) {
 	// Add initial user message
-	ex.engine.ctxManager.AddMessage(llm.NewUserMessage(ex.task.Description))
+	userMsg := llm.NewUserMessage(ex.task.Description)
+	ex.engine.ctxManager.AddMessage(userMsg)
+	ex.engine.sinkMessage(userMsg)
 
 	ex.engine.writeTrace("user_task", map[string]any{
 		"task_id":      ex.task.ID,
@@ -424,6 +439,7 @@ func (ex *executor) handleResponse(ctx context.Context, resp *llm.CompletionResp
 		ToolCalls: resp.ToolCalls,
 	}
 	ex.engine.ctxManager.AddMessage(assistantMsg)
+	ex.engine.sinkMessage(assistantMsg)
 
 	// Handle tool calls
 	if len(resp.ToolCalls) > 0 {
@@ -453,7 +469,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if !ok {
 		errMsg := fmt.Sprintf("Tool not found: %s", toolName)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
-		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
+		toolMsg := llm.NewToolMessage(tc.ID, errMsg)
+		ex.engine.ctxManager.AddMessage(toolMsg)
+		ex.engine.sinkMessage(toolMsg)
 		return nil
 	}
 	ex.engine.writeTrace("tool_call", tc)
@@ -478,7 +496,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if !granted {
 		errMsg := fmt.Sprintf("Permission denied for tool: %s", toolName)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
-		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
+		toolMsg := llm.NewToolMessage(tc.ID, errMsg)
+		ex.engine.ctxManager.AddMessage(toolMsg)
+		ex.engine.sinkMessage(toolMsg)
 		ex.engine.writeTrace("tool_permission_denied", map[string]any{
 			"tool":    toolName,
 			"action":  action,
@@ -496,7 +516,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if err != nil {
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
-		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
+		toolMsg := llm.NewToolMessage(tc.ID, errMsg)
+		ex.engine.ctxManager.AddMessage(toolMsg)
+		ex.engine.sinkMessage(toolMsg)
 		ex.engine.writeTrace("tool_exec_error", map[string]any{
 			"tool":    toolName,
 			"call_id": tc.ID,
@@ -509,7 +531,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if result.Error != nil {
 		errMsg := result.Error.Error()
 		ex.addEvent(NewEvent(EventToolError, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg)))
-		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
+		toolMsg := llm.NewToolMessage(tc.ID, errMsg)
+		ex.engine.ctxManager.AddMessage(toolMsg)
+		ex.engine.sinkMessage(toolMsg)
 		ex.engine.writeTrace("tool_result_error", map[string]any{
 			"tool":    toolName,
 			"call_id": tc.ID,
@@ -528,7 +552,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	ex.addToolEvent(toolName, result)
 
 	// Add tool result to context
-	ex.engine.ctxManager.AddToolResult(tc.ID, result.Content)
+	toolMsg := llm.NewToolMessage(tc.ID, result.Content)
+	ex.engine.ctxManager.AddMessage(toolMsg)
+	ex.engine.sinkMessage(toolMsg)
 
 	return nil
 }
@@ -604,6 +630,13 @@ func extractPathArg(raw json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+func (e *Engine) sinkMessage(msg llm.Message) {
+	if e.msgSink == nil {
+		return
+	}
+	_ = e.msgSink(msg)
 }
 
 // SetExecutorRun sets the executor run function (for backward compatibility).

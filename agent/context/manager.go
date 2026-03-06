@@ -462,3 +462,26 @@ func (m *Manager) TruncateTo(count int) {
 	m.messages = m.messages[len(m.messages)-count:]
 	m.recalculateUsage()
 }
+
+// ReplaceMessages replaces all non-system messages without running compaction.
+func (m *Manager) ReplaceMessages(msgs []llm.Message) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.messages = make([]llm.Message, len(msgs))
+	copy(m.messages, msgs)
+
+	if m.budget != nil {
+		m.budget.SetHistoryUsage(m.tokenizer.EstimateMessages(m.messages))
+	}
+
+	toolCount := 0
+	for _, msg := range m.messages {
+		if msg.Role == "tool" {
+			toolCount++
+		}
+	}
+	m.stats.MessageCount = len(m.messages)
+	m.stats.ToolCallCount = toolCount
+	m.recalculateUsage()
+}

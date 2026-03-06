@@ -20,7 +20,7 @@ type FileStore struct {
 // NewFileStore 创建新的文件存储
 func NewFileStore(basePath string) (*FileStore, error) {
 	if basePath == "" {
-		basePath = ".ms-cli/sessions"
+		basePath = ".mscli/sessions"
 	}
 
 	// 确保目录存在
@@ -247,7 +247,13 @@ func (fs *FileStore) Import(importPath string) (*Session, error) {
 	}
 
 	// 重新生成 ID 以避免冲突
-	session.ID = generateID()
+	base := generateID()
+	session.ID = base
+	suffix := 2
+	for fs.Exists(session.ID) {
+		session.ID = ID(fmt.Sprintf("%s-%d", base, suffix))
+		suffix++
+	}
 	session.CreatedAt = time.Now()
 	session.UpdatedAt = time.Now()
 

@@ -333,3 +333,33 @@ func TestCompactResult(t *testing.T) {
 		t.Error("CompactResult.String() should not be empty")
 	}
 }
+
+func TestReplaceMessages(t *testing.T) {
+	mgr := NewManager(DefaultManagerConfig())
+	mgr.SetSystemPrompt("system")
+
+	recovered := []llm.Message{
+		llm.NewUserMessage("u1"),
+		llm.NewAssistantMessage("a1"),
+		llm.NewToolMessage("call_1", "tool output"),
+	}
+	mgr.ReplaceMessages(recovered)
+
+	msgs := mgr.GetNonSystemMessages()
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d, want 3", len(msgs))
+	}
+	if msgs[2].Role != "tool" {
+		t.Fatalf("third message role = %s, want tool", msgs[2].Role)
+	}
+
+	stats := mgr.GetStats()
+	total, _ := stats["total_messages"].(int)
+	if total != 3 {
+		t.Fatalf("total_messages = %d, want 3", total)
+	}
+	toolCalls, _ := stats["tool_call_count"].(int)
+	if toolCalls != 1 {
+		t.Fatalf("tool_call_count = %d, want 1", toolCalls)
+	}
+}

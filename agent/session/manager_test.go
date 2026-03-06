@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"regexp"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ func TestNewSession(t *testing.T) {
 
 func TestAddMessage(t *testing.T) {
 	session := New("test", "/tmp")
-	
+
 	msg := llm.NewUserMessage("Hello")
 	session.AddMessage(msg)
 
@@ -54,7 +55,7 @@ func TestAddMessage(t *testing.T) {
 
 func TestAddToolMessage(t *testing.T) {
 	session := New("test", "/tmp")
-	
+
 	toolMsg := llm.NewToolMessage("call_123", "Tool result")
 	session.AddMessage(toolMsg)
 
@@ -65,7 +66,7 @@ func TestAddToolMessage(t *testing.T) {
 
 func TestClearMessages(t *testing.T) {
 	session := New("test", "/tmp")
-	
+
 	session.AddMessage(llm.NewUserMessage("Hello"))
 	session.AddMessage(llm.NewAssistantMessage("Hi"))
 
@@ -334,8 +335,8 @@ func TestDelete(t *testing.T) {
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.StorePath != ".ms-cli/sessions" {
-		t.Errorf("Expected default store path '.ms-cli/sessions', got '%s'", cfg.StorePath)
+	if cfg.StorePath != ".mscli/sessions" {
+		t.Errorf("Expected default store path '.mscli/sessions', got '%s'", cfg.StorePath)
 	}
 
 	if !cfg.AutoSave {
@@ -371,7 +372,7 @@ func TestSessionWithMessages(t *testing.T) {
 func TestCleanup(t *testing.T) {
 	tempDir := t.TempDir()
 	store, _ := NewFileStore(tempDir)
-	
+
 	cfg := DefaultConfig()
 	cfg.MaxAge = 1 * time.Nanosecond // Very short for testing
 	mgr := NewManager(store, cfg)
@@ -379,7 +380,7 @@ func TestCleanup(t *testing.T) {
 
 	// Create a session
 	session, _ := mgr.Create("cleanup-test", "/tmp")
-	
+
 	// Wait a bit
 	time.Sleep(10 * time.Millisecond)
 
@@ -405,7 +406,7 @@ func TestImportExport(t *testing.T) {
 	// Create and export
 	session, _ := mgr.Create("export-test", "/tmp")
 	exportPath := tempDir + "/exported.json"
-	
+
 	err := mgr.Export(session.ID, exportPath)
 	if err != nil {
 		t.Fatalf("Export failed: %v", err)
@@ -429,5 +430,37 @@ func TestImportExport(t *testing.T) {
 	// ID should be different (regenerated)
 	if imported.ID == session.ID {
 		t.Error("Imported session should have new ID")
+	}
+}
+
+func TestGenerateIDFormat(t *testing.T) {
+	id := generateID()
+	pattern := regexp.MustCompile(`^sess_\d{6}-\d{6}$`)
+	if !pattern.MatchString(string(id)) {
+		t.Fatalf("session id format invalid: %s", id)
+	}
+}
+
+func TestNextAvailableIDAddsSuffixOnConflict(t *testing.T) {
+	store, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileStore failed: %v", err)
+	}
+	mgr := NewManager(store, DefaultConfig())
+	defer mgr.Close()
+
+	base := ID("sess_260305-112233")
+	s1 := New("one", "/tmp")
+	s1.ID = base
+	if err := store.Save(s1); err != nil {
+		t.Fatalf("save base failed: %v", err)
+	}
+
+	mgr.mu.Lock()
+	next := mgr.nextAvailableIDLocked(base)
+	mgr.mu.Unlock()
+
+	if next != ID("sess_260305-112233-2") {
+		t.Fatalf("next id = %s, want %s", next, "sess_260305-112233-2")
 	}
 }

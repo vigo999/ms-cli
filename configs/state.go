@@ -12,6 +12,7 @@ import (
 
 // State holds user preferences that persist across sessions.
 type State struct {
+	Protocol     string `yaml:"protocol,omitempty"`
 	Model        string `yaml:"model,omitempty"`
 	Key          string `yaml:"key,omitempty"`
 	LegacyAPIKey string `yaml:"api_key,omitempty"` // Backward compatibility.
@@ -105,6 +106,9 @@ func (m *StateManager) ApplyToConfig(cfg *Config) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if m.state.Protocol != "" {
+		cfg.Model.Protocol = NormalizeProtocol(m.state.Protocol)
+	}
 	if m.state.Model != "" {
 		cfg.Model.Model = m.state.Model
 	}
@@ -120,6 +124,7 @@ func (m *StateManager) SaveFromConfig(cfg *Config) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	m.state.Protocol = NormalizeProtocol(cfg.Model.Protocol)
 	m.state.Model = cfg.Model.Model
 	m.state.Key = cfg.Model.Key
 }

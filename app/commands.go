@@ -3,10 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/vigo999/ms-cli/configs"
 	"github.com/vigo999/ms-cli/internal/project"
 	"github.com/vigo999/ms-cli/permission"
 	"github.com/vigo999/ms-cli/ui/model"
@@ -136,56 +136,91 @@ func (a *Application) cmdModel(args []string) {
 		return
 	}
 
-	// Accept "openai:model" for backward compatibility.
-	modelArg := args[0]
-	if strings.Contains(modelArg, ":") {
-		parts := strings.SplitN(modelArg, ":", 2)
-		providerName := strings.TrimSpace(parts[0])
-		modelName := parts[1]
-		if providerName != "" && providerName != "openai" {
+	if strings.EqualFold(strings.TrimSpace(args[0]), "key") {
+		if len(args) < 2 {
 			a.EventCh <- model.Event{
 				Type:    model.AgentReply,
-				Message: fmt.Sprintf("Unsupported provider prefix: %s (only openai-compatible is supported)", providerName),
+				Message: "Usage: /model key <API_KEY>",
 			}
 			return
 		}
-		a.switchModel(modelName)
+		key := strings.TrimSpace(strings.Join(args[1:], " "))
+		if key == "" {
+			a.EventCh <- model.Event{
+				Type:    model.AgentReply,
+				Message: "Usage: /model key <API_KEY>",
+			}
+			return
+		}
+		a.switchProvider("", "", key)
 		return
 	}
 
-	// Just switch model.
-	a.switchModel(modelArg)
+	// Accept "provider:model" format.
+	modelArg := args[0]
+	if strings.Contains(modelArg, ":") {
+		parts := strings.SplitN(modelArg, ":", 2)
+		rawProvider := strings.TrimSpace(parts[0])
+		providerName := rawProvider
+		if rawProvider != "" {
+			providerName = configs.NormalizeProtocol(rawProvider)
+		}
+		modelName := strings.TrimSpace(parts[1])
+		if rawProvider != "" && !configs.IsSupportedProtocol(providerName) {
+			a.EventCh <- model.Event{
+				Type:    model.AgentReply,
+				Message: fmt.Sprintf("Unsupported provider prefix: %s (supported: %s, %s)", providerName, configs.ProtocolOpenAI, configs.ProtocolAnthropic),
+			}
+			return
+		}
+		if modelName == "" {
+			a.EventCh <- model.Event{
+				Type:    model.AgentReply,
+				Message: "Usage: /model <provider>:<model>",
+			}
+			return
+		}
+		a.switchProvider(providerName, modelName, "")
+		return
+	}
+
+	// Switch model on current provider.
+	a.switchProvider("", strings.TrimSpace(modelArg), "")
 }
 
 // showCurrentModel displays current URL/model/key status.
 func (a *Application) showCurrentModel() {
+	protocol := configs.NormalizeProtocol(a.Config.Model.Protocol)
 	modelName := a.Config.Model.Model
 	url := a.Config.Model.URL
 	if url == "" {
-		url = "https://api.openai.com/v1"
+		url = defaultURLForProtocol(protocol)
 	}
 
 	apiKeyStatus := "not set"
-	if a.Config.Model.Key != "" ||
-		getEnv("MSCLI_API_KEY") != "" ||
-		getEnv("OPENAI_API_KEY") != "" {
+	if hasConfiguredAPIKey(protocol, a.Config.Model.Key) {
 		apiKeyStatus = "set"
 	}
 
 	msg := fmt.Sprintf(`Current Model Configuration:
 
+  Protocol: %s
   URL:   %s
   Model: %s
   Key:   %s
 
-To switch model:
+To switch provider/model:
   /model <model-name>
-  /model openai:<model>         (backward-compatible prefix)
+  /model openai:<model>
+  /model anthropic:<model>
+  /model key <API_KEY>
 
 Examples:
   /model gpt-4o
-  /model openai:gpt-4o-mini`,
-		url, modelName, apiKeyStatus)
+  /model openai:gpt-4o-mini
+  /model anthropic:claude-3-5-sonnet-latest
+  /model key sk-xxx`,
+		protocol, url, modelName, apiKeyStatus)
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
@@ -193,11 +228,11 @@ Examples:
 	}
 }
 
-// switchModel switches to a new model.
-func (a *Application) switchModel(modelName string) {
+// switchProvider switches provider/model/key.
+func (a *Application) switchProvider(providerName, modelName, apiKey string) {
 	a.EventCh <- model.Event{Type: model.AgentThinking}
 
-	err := a.SetProvider("", modelName, "")
+	err := a.SetProvider(providerName, modelName, apiKey)
 	if err != nil {
 		a.EventCh <- model.Event{
 			Type:     model.ToolError,
@@ -217,27 +252,30 @@ func (a *Application) switchModel(modelName string) {
 	if err := a.SaveState(); err != nil {
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
-			Message: fmt.Sprintf("Model switched to: %s. Warning: failed to save state: %v", a.Config.Model.Model, err),
+			Message: fmt.Sprintf("Updated provider config (protocol=%s, model=%s). Warning: failed to save state: %v", a.Config.Model.Protocol, a.Config.Model.Model, err),
 		}
 		return
 	}
 
+	successMsg := fmt.Sprintf("Model switched to: %s (%s)", a.Config.Model.Model, a.Config.Model.Protocol)
+	if apiKey != "" && modelName == "" {
+		successMsg = fmt.Sprintf("API key updated for %s", a.Config.Model.Protocol)
+	}
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
-		Message: fmt.Sprintf("Model switched to: %s", a.Config.Model.Model),
+		Message: successMsg,
 	}
-}
-
-// getEnv is a helper to get environment variable.
-func getEnv(key string) string {
-	return os.Getenv(key)
 }
 
 // cmdExit handles "/exit".
 func (a *Application) cmdExit() {
+	msg := "Goodbye!"
+	if a.currentSessionID != "" {
+		msg = fmt.Sprintf("Goodbye!\nYou can resume this conversation with: ms-cli resume %s", a.currentSessionID)
+	}
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
-		Message: "Goodbye!",
+		Message: msg,
 	}
 	// Send Done event to close the UI
 	go func() {
@@ -268,6 +306,19 @@ func (a *Application) cmdCompact() {
 
 // cmdClear handles "/clear".
 func (a *Application) cmdClear() {
+	if a.ctxManager != nil {
+		a.ctxManager.Clear()
+	}
+	if a.sessionManager != nil {
+		if err := a.sessionManager.ClearCurrentMessages(); err != nil {
+			a.EventCh <- model.Event{
+				Type:     model.ToolError,
+				ToolName: "session",
+				Message:  fmt.Sprintf("failed to clear session messages: %v", err),
+			}
+		}
+	}
+
 	// Clear all messages by sending a special event
 	a.EventCh <- model.Event{
 		Type:    model.ClearScreen,
@@ -280,27 +331,37 @@ func (a *Application) cmdTest() {
 	a.EventCh <- model.Event{Type: model.AgentThinking}
 
 	// Get current model config.
+	protocol := configs.NormalizeProtocol(a.Config.Model.Protocol)
 	modelName := a.Config.Model.Model
 	url := a.Config.Model.URL
 	if url == "" {
-		url = "https://api.openai.com/v1"
+		url = defaultURLForProtocol(protocol)
 	}
 	apiKeyStatus := "not set"
-	if a.Config.Model.Key != "" {
-		apiKeyStatus = "set (" + fmt.Sprintf("%d chars", len(a.Config.Model.Key)) + ")"
+	if hasConfiguredAPIKey(protocol, a.Config.Model.Key) {
+		apiKeyStatus = "set"
 	}
 
 	msg := fmt.Sprintf(`API Connection Test:
 
+  Protocol: %s
   URL:     %s
   Model:   %s
   API Key: %s
 
-Testing connectivity...`, url, modelName, apiKeyStatus)
+Testing connectivity...`, protocol, url, modelName, apiKeyStatus)
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
 		Message: msg,
+	}
+
+	if !hasConfiguredAPIKey(protocol, a.Config.Model.Key) {
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: "API key is not configured. Use `/model key <KEY>` or set MSCLI_API_KEY / provider-specific API key env.",
+		}
+		return
 	}
 
 	// Try a simple completion to test the API
@@ -370,6 +431,13 @@ func (a *Application) cmdPermission(args []string) {
 	level := permission.ParsePermissionLevel(levelStr)
 
 	permSvc.Grant(tool, level)
+	if err := a.syncSessionRuntime(); err != nil {
+		a.EventCh <- model.Event{
+			Type:     model.ToolError,
+			ToolName: "session",
+			Message:  fmt.Sprintf("Permission updated but failed to sync session runtime: %v", err),
+		}
+	}
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
@@ -410,6 +478,13 @@ func (a *Application) cmdYolo() {
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
 			Message: "⚡ YOLO mode enabled! All operations will be auto-approved. Use with caution!",
+		}
+	}
+	if err := a.syncSessionRuntime(); err != nil {
+		a.EventCh <- model.Event{
+			Type:     model.ToolError,
+			ToolName: "session",
+			Message:  fmt.Sprintf("YOLO updated but failed to sync session runtime: %v", err),
 		}
 	}
 }
@@ -463,7 +538,9 @@ func (a *Application) cmdHelp() {
 Model Commands:
   /model                  Show current configuration
   /model gpt-4o           Switch to gpt-4o
-  /model openai:gpt-4o    Backward-compatible format
+  /model openai:gpt-4o    OpenAI protocol
+  /model anthropic:claude-3-5-sonnet-latest
+  /model key sk-xxx       Update API key at runtime
 
 Permission Commands:
   /permission             Show current permission settings
@@ -487,12 +564,16 @@ Keybindings:
   ctrl+c     Cancel/Quit (press twice to exit)
 
 Environment Variables:
-  MSCLI_BASE_URL          OpenAI-compatible base URL
+  MSCLI_PROTOCOL          Protocol override (openai|anthropic)
+  MSCLI_BASE_URL          Base URL (highest priority)
   MSCLI_MODEL             Default model
   MSCLI_API_KEY           API key
   OPENAI_BASE_URL         Base URL (fallback)
   OPENAI_MODEL            Model (fallback)
-  OPENAI_API_KEY          API key (fallback)`
+  OPENAI_API_KEY          API key (fallback for openai)
+  ANTHROPIC_BASE_URL      Base URL (fallback for anthropic)
+  ANTHROPIC_MODEL         Model (fallback for anthropic)
+  ANTHROPIC_API_KEY       API key (fallback for anthropic)`
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,

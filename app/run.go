@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,10 @@ func (a *Application) Run() error {
 	if closer, ok := a.traceWriter.(interface{ Close() error }); ok {
 		defer closer.Close()
 	}
+	if a.sessionManager != nil {
+		defer a.sessionManager.Close()
+	}
+	defer a.printResumeHint()
 
 	if a.Demo {
 		return a.runDemo()
@@ -24,11 +29,18 @@ func (a *Application) Run() error {
 	return a.runReal()
 }
 
+func (a *Application) printResumeHint() {
+	if a.currentSessionID == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\nYou can resume this conversation with: ms-cli resume %s\n", a.currentSessionID)
+}
+
 // runReal starts the TUI and a goroutine that reads user input from the
 // channel, dispatches to the engine, and sends resulting events back.
 func (a *Application) runReal() error {
 	userCh := make(chan string, 8)
-	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.MaxTokens)
+	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.MaxTokens, a.initialUIMessages)
 	// Mouse wheel scrolling is enabled by default.
 	// Use /mouse off to disable if needed.
 	p := tea.NewProgram(tui, tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -241,7 +253,7 @@ func generateTaskID() string {
 func (a *Application) runDemo() error {
 	go a.fakeAgentLoop()
 
-	tui := ui.New(a.EventCh, nil, Version, a.WorkDir, a.RepoURL, "demo-model", a.Config.Context.MaxTokens)
+	tui := ui.New(a.EventCh, nil, Version, a.WorkDir, a.RepoURL, "demo-model", a.Config.Context.MaxTokens, a.initialUIMessages)
 	// Mouse support disabled to allow free text selection.
 	p := tea.NewProgram(tui, tea.WithAltScreen())
 	_, err := p.Run()

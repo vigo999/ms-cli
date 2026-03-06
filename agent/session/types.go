@@ -17,6 +17,7 @@ type Session struct {
 	WorkDir   string
 	Messages  []llm.Message
 	Metadata  Metadata
+	Runtime   RuntimeSnapshot
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Archived  bool
@@ -32,26 +33,63 @@ type Metadata struct {
 	Description   string
 }
 
+// RuntimeSnapshot captures runtime preferences that should be restorable.
+type RuntimeSnapshot struct {
+	Model      ModelSnapshot
+	Permission PermissionSnapshot
+	TracePath  string
+}
+
+// ModelSnapshot stores model settings for session resume.
+type ModelSnapshot struct {
+	Protocol    string
+	URL         string
+	Model       string
+	Temperature float64
+	TimeoutSec  int
+	MaxTokens   int
+}
+
+// PermissionSnapshot stores permission policies for session resume.
+type PermissionSnapshot struct {
+	ToolPolicies    map[string]string
+	CommandPolicies map[string]string
+	PathPolicies    []PathPolicySnapshot
+}
+
+// PathPolicySnapshot represents one path-based permission rule.
+type PathPolicySnapshot struct {
+	Pattern string
+	Level   string
+}
+
 // Info 会话简要信息（用于列表显示）
 type Info struct {
-	ID          ID
-	Name        string
-	WorkDir     string
+	ID           ID
+	Name         string
+	WorkDir      string
 	MessageCount int
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	Archived    bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	Archived     bool
 }
 
 // New 创建新会话
 func New(name, workDir string) *Session {
 	now := time.Now()
 	return &Session{
-		ID:        generateID(),
-		Name:      name,
-		WorkDir:   workDir,
-		Messages:  make([]llm.Message, 0),
-		Metadata:  Metadata{},
+		ID:       generateID(),
+		Name:     name,
+		WorkDir:  workDir,
+		Messages: make([]llm.Message, 0),
+		Metadata: Metadata{},
+		Runtime: RuntimeSnapshot{
+			Permission: PermissionSnapshot{
+				ToolPolicies:    make(map[string]string),
+				CommandPolicies: make(map[string]string),
+				PathPolicies:    make([]PathPolicySnapshot, 0),
+			},
+		},
 		CreatedAt: now,
 		UpdatedAt: now,
 		Archived:  false,
@@ -125,7 +163,7 @@ type Config struct {
 // DefaultConfig 返回默认配置
 func DefaultConfig() Config {
 	return Config{
-		StorePath:      ".ms-cli/sessions",
+		StorePath:      ".mscli/sessions",
 		AutoSave:       true,
 		MaxSessions:    50,
 		MaxAge:         30 * 24 * time.Hour,
@@ -143,5 +181,5 @@ type Filter struct {
 
 // generateID 生成唯一 ID
 func generateID() ID {
-	return ID(fmt.Sprintf("sess_%d", time.Now().UnixNano()))
+	return ID(fmt.Sprintf("sess_%s", time.Now().Format("060102-150405")))
 }

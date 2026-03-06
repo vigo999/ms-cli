@@ -3,6 +3,14 @@ package configs
 
 import (
 	"fmt"
+	"strings"
+)
+
+const (
+	// ProtocolOpenAI identifies OpenAI-compatible protocol.
+	ProtocolOpenAI = "openai"
+	// ProtocolAnthropic identifies Anthropic native protocol.
+	ProtocolAnthropic = "anthropic"
 )
 
 // Config holds the complete application configuration.
@@ -19,6 +27,7 @@ type Config struct {
 
 // ModelConfig holds the LLM model configuration.
 type ModelConfig struct {
+	Protocol    string            `yaml:"protocol,omitempty"`
 	URL         string            `yaml:"url,omitempty"`
 	Key         string            `yaml:"key,omitempty"`
 	Model       string            `yaml:"model"`
@@ -98,6 +107,7 @@ type DockerConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Model: ModelConfig{
+			Protocol:    ProtocolOpenAI,
 			URL:         "https://api.openai.com/v1",
 			Model:       "gpt-4o-mini",
 			Temperature: 0.7,
@@ -159,6 +169,11 @@ func DefaultConfig() *Config {
 
 // Validate validates the configuration.
 func (c *Config) Validate() error {
+	c.Model.Protocol = NormalizeProtocol(c.Model.Protocol)
+	if !IsSupportedProtocol(c.Model.Protocol) {
+		return fmt.Errorf("model protocol must be one of: %s, %s", ProtocolOpenAI, ProtocolAnthropic)
+	}
+
 	if c.Model.URL == "" {
 		return fmt.Errorf("model url is required")
 	}
@@ -184,6 +199,9 @@ func (c *Config) Validate() error {
 
 // Merge merges another config into this one (overwriting values).
 func (c *Config) Merge(other *Config) {
+	if other.Model.Protocol != "" {
+		c.Model.Protocol = NormalizeProtocol(other.Model.Protocol)
+	}
 	if other.Model.URL != "" {
 		c.Model.URL = other.Model.URL
 	}
@@ -224,5 +242,24 @@ func (c *Config) Merge(other *Config) {
 	}
 	if other.Context.MaxHistoryRounds != 0 {
 		c.Context.MaxHistoryRounds = other.Context.MaxHistoryRounds
+	}
+}
+
+// NormalizeProtocol normalizes protocol name and keeps empty unchanged as default openai.
+func NormalizeProtocol(protocol string) string {
+	p := strings.ToLower(strings.TrimSpace(protocol))
+	if p == "" {
+		return ProtocolOpenAI
+	}
+	return p
+}
+
+// IsSupportedProtocol reports whether protocol is recognized.
+func IsSupportedProtocol(protocol string) bool {
+	switch NormalizeProtocol(protocol) {
+	case ProtocolOpenAI, ProtocolAnthropic:
+		return true
+	default:
+		return false
 	}
 }

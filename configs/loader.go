@@ -101,23 +101,62 @@ func FindConfigFile() string {
 }
 
 // ApplyEnvOverrides applies environment variable overrides to the config.
-// Precedence: MSCLI_* > OPENAI_* > YAML > defaults.
+// Precedence:
+// 1) protocol selection: MSCLI_PROTOCOL > auto-detect(OpenAI triplet > Anthropic triplet) > YAML/default
+// 2) model fields: provider-specific env (selected protocol) > MSCLI_MODEL/MSCLI_BASE_URL/MSCLI_API_KEY
 func ApplyEnvOverrides(cfg *Config) {
-	// Model settings
-	if v := os.Getenv("OPENAI_MODEL"); v != "" {
-		cfg.Model.Model = v
+	baseProtocol := NormalizeProtocol(cfg.Model.Protocol)
+	protocol := baseProtocol
+
+	if v := strings.TrimSpace(os.Getenv("MSCLI_PROTOCOL")); v != "" {
+		if candidate := NormalizeProtocol(v); IsSupportedProtocol(candidate) {
+			protocol = candidate
+		}
+	} else {
+		switch {
+		case hasEnvTriplet("OPENAI_BASE_URL", "OPENAI_MODEL", "OPENAI_API_KEY"):
+			protocol = ProtocolOpenAI
+		case hasEnvTriplet("ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_API_KEY"):
+			protocol = ProtocolAnthropic
+		}
 	}
+	cfg.Model.Protocol = protocol
+	if protocol != baseProtocol {
+		currentURL := strings.TrimSpace(cfg.Model.URL)
+		if currentURL == "" || currentURL == defaultURLForProtocol(baseProtocol) {
+			cfg.Model.URL = defaultURLForProtocol(protocol)
+		}
+	}
+
+	switch protocol {
+	case ProtocolAnthropic:
+		if v := os.Getenv("ANTHROPIC_MODEL"); v != "" {
+			cfg.Model.Model = v
+		}
+		if v := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); v != "" {
+			cfg.Model.Key = v
+		}
+		if v := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); v != "" {
+			cfg.Model.URL = v
+		}
+	default:
+		if v := os.Getenv("OPENAI_MODEL"); v != "" {
+			cfg.Model.Model = v
+		}
+		if v := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); v != "" {
+			cfg.Model.Key = v
+		}
+		if v := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); v != "" {
+			cfg.Model.URL = v
+		}
+	}
+
+	// MSCLI_* always has top priority.
 	if v := os.Getenv("MSCLI_MODEL"); v != "" {
 		cfg.Model.Model = v
 	}
-	if v := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); v != "" {
-		cfg.Model.Key = v
-	}
 	if v := strings.TrimSpace(os.Getenv("MSCLI_API_KEY")); v != "" {
 		cfg.Model.Key = v
-	}
-	if v := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); v != "" {
-		cfg.Model.URL = v
 	}
 	if v := strings.TrimSpace(os.Getenv("MSCLI_BASE_URL")); v != "" {
 		cfg.Model.URL = v
@@ -187,6 +226,21 @@ func ApplyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MSCLI_MEMORY_PATH"); v != "" {
 		cfg.Memory.StorePath = v
+	}
+}
+
+func hasEnvTriplet(urlKey, modelKey, apiKey string) bool {
+	return strings.TrimSpace(os.Getenv(urlKey)) != "" &&
+		strings.TrimSpace(os.Getenv(modelKey)) != "" &&
+		strings.TrimSpace(os.Getenv(apiKey)) != ""
+}
+
+func defaultURLForProtocol(protocol string) string {
+	switch NormalizeProtocol(protocol) {
+	case ProtocolAnthropic:
+		return "https://api.anthropic.com/v1"
+	default:
+		return "https://api.openai.com/v1"
 	}
 }
 
