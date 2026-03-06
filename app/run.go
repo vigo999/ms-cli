@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/vigo999/ms-cli/agent/loop"
+	"github.com/vigo999/ms-cli/tools/events"
+	permEngine "github.com/vigo999/ms-cli/tools/permission"
 	"github.com/vigo999/ms-cli/ui"
 	"github.com/vigo999/ms-cli/ui/model"
 )
@@ -32,6 +34,47 @@ func (a *Application) runReal() error {
 	// Mouse wheel scrolling is enabled by default.
 	// Use /mouse off to disable if needed.
 	p := tea.NewProgram(tui, tea.WithAltScreen(), tea.WithMouseCellMotion())
+
+	// Set up permission event bus for TUI
+	eventBus := events.NewEventBus()
+	if engine, ok := a.permEngine.(*permEngine.DefaultEngine); ok {
+		engine.SetEventBus(eventBus)
+	}
+
+	// Subscribe to permission request events
+	eventBus.Subscribe(events.PermissionRequestedTopic, func(evt events.Event) {
+		permReq, ok := evt.Data().(*permEngine.PermissionRequestedEvent)
+		if !ok {
+			return
+		}
+
+		// Send permission request to TUI
+		respCh := make(chan model.PermissionResponse, 1)
+		a.EventCh <- model.Event{
+			Type:             model.PermissionRequest,
+			PermissionTool:   permReq.ToolID,
+			PermissionAction: permReq.Permission,
+			PermissionPath:   strings.Join(permReq.Patterns, ", "),
+			PermissionRespCh: respCh,
+		}
+
+		// Wait for response
+		go func() {
+			resp := <-respCh
+			action := permEngine.ActionDeny
+			if resp.Granted {
+				action = permEngine.ActionAllow
+			}
+			if engine, ok := a.permEngine.(*permEngine.DefaultEngine); ok {
+				engine.HandlePermissionResponse(permReq.RequestID, permEngine.PermissionResponse{
+					RequestID:   permReq.RequestID,
+					Action:      action,
+					AlwaysAllow: resp.Remember,
+					Timestamp:   time.Now().Unix(),
+				})
+			}
+		}()
+	})
 
 	go a.inputLoop(userCh)
 

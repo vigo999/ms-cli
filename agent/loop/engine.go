@@ -10,8 +10,9 @@ import (
 	ctxmanager "github.com/vigo999/ms-cli/agent/context"
 	"github.com/vigo999/ms-cli/agent/plan"
 	"github.com/vigo999/ms-cli/integrations/llm"
-	"github.com/vigo999/ms-cli/permission"
 	"github.com/vigo999/ms-cli/tools"
+	"github.com/vigo999/ms-cli/tools/permission"
+	"github.com/vigo999/ms-cli/tools/registry"
 	"github.com/vigo999/ms-cli/trace"
 )
 
@@ -31,9 +32,9 @@ type EngineConfig struct {
 type Engine struct {
 	config     EngineConfig
 	provider   llm.Provider
-	tools      *tools.Registry
+	tools      registry.Registry
 	ctxManager *ctxmanager.Manager
-	permission permission.PermissionService
+	permEngine permission.Engine
 	trace      trace.Writer
 
 	// Plan Mode 组件
@@ -43,7 +44,7 @@ type Engine struct {
 }
 
 // NewEngine creates a new engine.
-func NewEngine(cfg EngineConfig, provider llm.Provider, tools *tools.Registry) *Engine {
+func NewEngine(cfg EngineConfig, provider llm.Provider, tools registry.Registry) *Engine {
 	// MaxIterations = 0 means no limit
 	if cfg.Temperature == 0 {
 		cfg.Temperature = 0.7
@@ -69,13 +70,9 @@ func NewEngine(cfg EngineConfig, provider llm.Provider, tools *tools.Registry) *
 	})
 	engine.ctxManager.SetSystemPrompt(cfg.SystemPrompt)
 
-	// Default permission service
-	engine.permission = permission.NewNoOpPermissionService()
-
 	// Initialize Plan Mode components
 	engine.planner = plan.NewPlanner(provider, plan.DefaultPlannerConfig())
-	engine.planExecutor = plan.NewPlanExecutor(&toolRegistryAdapter{tools: tools}, engine.modeCallback, plan.DefaultExecutionConfig())
-	engine.planExecutor.SetPermissionService(engine.permission)
+	engine.planExecutor = plan.NewPlanExecutor(tools, engine.modeCallback, plan.DefaultExecutionConfig())
 
 	return engine
 }
@@ -98,12 +95,9 @@ func (e *Engine) SetContextManager(cm *ctxmanager.Manager) {
 	e.ctxManager = cm
 }
 
-// SetPermissionService sets the permission service.
-func (e *Engine) SetPermissionService(ps permission.PermissionService) {
-	e.permission = ps
-	if e.planExecutor != nil {
-		e.planExecutor.SetPermissionService(ps)
-	}
+// SetPermissionEngine sets the permission engine.
+func (e *Engine) SetPermissionEngine(pe permission.Engine) {
+	e.permEngine = pe
 }
 
 // SetModeCallback sets the mode callback.
@@ -296,7 +290,7 @@ func (e *Engine) getAvailableTools() []string {
 	toolList := e.tools.List()
 	names := make([]string, len(toolList))
 	for i, t := range toolList {
-		names[i] = t.Name()
+		names[i] = t.Info().Name
 	}
 	return names
 }
@@ -458,41 +452,22 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	}
 	ex.engine.writeTrace("tool_call", tc)
 
-	// Check permission
-	action := string(tc.Function.Arguments)
-	if toolName == "shell" {
-		var shellArgs struct {
-			Command string `json:"command"`
-		}
-		if err := json.Unmarshal(tc.Function.Arguments, &shellArgs); err == nil {
-			if cmd := strings.TrimSpace(shellArgs.Command); cmd != "" {
-				action = cmd
-			}
-		}
-	}
-	path := extractPathArg(tc.Function.Arguments)
-	granted, err := ex.engine.permission.Request(ctx, toolName, action, path)
-	if err != nil {
-		return err
-	}
-	if !granted {
-		errMsg := fmt.Sprintf("Permission denied for tool: %s", toolName)
-		ex.addEvent(NewEvent(EventToolError, errMsg))
-		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
-		ex.engine.writeTrace("tool_permission_denied", map[string]any{
-			"tool":    toolName,
-			"action":  action,
-			"path":    path,
-			"call_id": tc.ID,
-		})
-		return nil
-	}
-
 	// Add event
 	ex.addEvent(NewEvent(EventToolStarted, fmt.Sprintf("Using tool: %s", toolName)))
 
+	// Create tool context and executor
+	toolCtx := &tools.ToolContext{
+		SessionID:   ex.task.ID,
+		MessageID:   tc.ID,
+		CallID:      tc.ID,
+		ToolID:      toolName,
+		AbortSignal: ctx,
+	}
+
+	toolExec := &agentToolExecutor{engine: ex.engine}
+
 	// Execute tool
-	result, err := tool.Execute(ctx, tc.Function.Arguments)
+	result, err := tool.Execute(toolCtx, toolExec, tc.Function.Arguments)
 	if err != nil {
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
@@ -507,7 +482,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 
 	// Handle error result
 	if result.Error != nil {
-		errMsg := result.Error.Error()
+		errMsg := result.Error.Message
 		ex.addEvent(NewEvent(EventToolError, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg)))
 		ex.engine.ctxManager.AddToolResult(tc.ID, errMsg)
 		ex.engine.writeTrace("tool_result_error", map[string]any{
@@ -517,24 +492,26 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		})
 		return nil
 	}
+
+	// Extract content from result
+	content := extractResultContent(result)
 	ex.engine.writeTrace("tool_result", map[string]any{
 		"tool":    toolName,
 		"call_id": tc.ID,
-		"content": result.Content,
-		"summary": result.Summary,
+		"content": content,
 	})
 
 	// Add tool event based on tool type
-	ex.addToolEvent(toolName, result)
+	ex.addToolEvent(toolName, result, content)
 
 	// Add tool result to context
-	ex.engine.ctxManager.AddToolResult(tc.ID, result.Content)
+	ex.engine.ctxManager.AddToolResult(tc.ID, content)
 
 	return nil
 }
 
 // addToolEvent adds an event based on tool type.
-func (ex *executor) addToolEvent(toolName string, result *tools.Result) {
+func (ex *executor) addToolEvent(toolName string, result *tools.ToolResult, content string) {
 	eventType := EventToolStarted
 	switch toolName {
 	case "read":
@@ -547,14 +524,66 @@ func (ex *executor) addToolEvent(toolName string, result *tools.Result) {
 		eventType = EventToolEdit
 	case "write":
 		eventType = EventToolWrite
-	case "shell":
+	case "bash":
 		eventType = EventCmdStarted
 	}
 
-	ev := NewEvent(eventType, result.Content)
+	ev := NewEvent(eventType, content)
 	ev.ToolName = toolName
-	ev.Summary = result.Summary
+	ev.Summary = truncate(content, 200)
 	ex.addEvent(ev)
+}
+
+// extractResultContent 从ToolResult提取文本内容
+func extractResultContent(result *tools.ToolResult) string {
+	var parts []string
+	for _, part := range result.Parts {
+		if part.Type == tools.PartTypeText {
+			parts = append(parts, part.Content)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// truncate 截断字符串
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// agentToolExecutor 工具执行器实现
+type agentToolExecutor struct {
+	engine *Engine
+}
+
+func (e *agentToolExecutor) UpdateMetadata(meta tools.MetadataUpdate) error {
+	return nil
+}
+
+func (e *agentToolExecutor) AskPermission(req tools.PermissionRequest) error {
+	if e.engine == nil || e.engine.permEngine == nil {
+		return nil // 没有权限服务，默认允许
+	}
+
+	// Convert tools.PermissionRequest to permission.PermissionRequest
+	permReq := permission.PermissionRequest{
+		ID:         req.ID,
+		SessionID:  req.SessionID,
+		ToolID:     req.ToolID,
+		CallID:     req.CallID,
+		Permission: req.Permission,
+		Patterns:   req.Patterns,
+		Metadata:   req.Metadata,
+		CheckLevel: permission.CheckLevel(req.CheckLevel),
+	}
+
+	// 调用权限引擎检查
+	if err := e.engine.permEngine.Ask(permReq); err != nil {
+		return fmt.Errorf("permission denied for %s: %w", req.ToolID, err)
+	}
+	return nil
 }
 
 // addEvent adds an event to the list.
@@ -604,69 +633,4 @@ func extractPathArg(raw json.RawMessage) string {
 		}
 	}
 	return ""
-}
-
-// SetExecutorRun sets the executor run function (for backward compatibility).
-var executorRun = func(task Task) string {
-	return "Executed: " + task.Description
-}
-
-// SetExecutorRun sets the executor run function.
-func SetExecutorRun(run func(task Task) string) {
-	if run != nil {
-		executorRun = run
-	}
-}
-
-// toolRegistryAdapter 工具注册表适配器
-type toolRegistryAdapter struct {
-	tools *tools.Registry
-}
-
-// Get 获取工具
-func (a *toolRegistryAdapter) Get(name string) (plan.Tool, bool) {
-	t, ok := a.tools.Get(name)
-	if !ok {
-		return nil, false
-	}
-	return &toolAdapter{tool: t}, true
-}
-
-// List 列出所有工具
-func (a *toolRegistryAdapter) List() []plan.Tool {
-	toolList := a.tools.List()
-	result := make([]plan.Tool, len(toolList))
-	for i, t := range toolList {
-		result[i] = &toolAdapter{tool: t}
-	}
-	return result
-}
-
-// toolAdapter 工具适配器
-type toolAdapter struct {
-	tool tools.Tool
-}
-
-// Name 返回工具名
-func (a *toolAdapter) Name() string {
-	return a.tool.Name()
-}
-
-// Execute 执行工具
-func (a *toolAdapter) Execute(ctx context.Context, params map[string]any) (string, error) {
-	paramsJSON, err := json.Marshal(params)
-	if err != nil {
-		return "", fmt.Errorf("marshal params: %w", err)
-	}
-
-	result, err := a.tool.Execute(ctx, paramsJSON)
-	if err != nil {
-		return "", err
-	}
-
-	if result.Error != nil {
-		return "", result.Error
-	}
-
-	return result.Content, nil
 }

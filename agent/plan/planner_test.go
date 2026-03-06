@@ -2,11 +2,14 @@ package plan
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	ctxmanager "github.com/vigo999/ms-cli/agent/context"
 	"github.com/vigo999/ms-cli/test/mocks"
+	"github.com/vigo999/ms-cli/tools"
+	"github.com/vigo999/ms-cli/tools/registry"
 )
 
 func TestNewPlan(t *testing.T) {
@@ -355,12 +358,12 @@ func TestExecutionReport(t *testing.T) {
 }
 
 func TestPlanExecutor(t *testing.T) {
-	registry := NewSimpleToolRegistry()
-	registry.Register(NewSimpleTool("test_tool", func(ctx context.Context, params map[string]any) (string, error) {
+	reg := registry.NewRegistry()
+	reg.Register(newTestTool("test_tool", func(ctx context.Context, params map[string]any) (string, error) {
 		return "test result", nil
 	}))
 
-	executor := NewPlanExecutor(registry, &DefaultModeCallback{}, DefaultExecutionConfig())
+	executor := NewPlanExecutor(reg, &DefaultModeCallback{}, DefaultExecutionConfig())
 
 	plan := NewPlan("Test")
 	plan.AddStepWithTool("Step 1", "test_tool", nil)
@@ -390,4 +393,45 @@ func TestModeConfig(t *testing.T) {
 	if !cfg.PlanConfig.RequireApproval {
 		t.Error("RequireApproval should be true by default")
 	}
+}
+
+// testTool 是用于测试的简单工具实现
+type testTool struct {
+	name    string
+	handler func(ctx context.Context, params map[string]any) (string, error)
+}
+
+// newTestTool 创建测试工具
+func newTestTool(name string, handler func(ctx context.Context, params map[string]any) (string, error)) tools.ExecutableTool {
+	return &testTool{
+		name:    name,
+		handler: handler,
+	}
+}
+
+// Info 返回工具定义
+func (t *testTool) Info() *tools.ToolDefinition {
+	return &tools.ToolDefinition{
+		Name:        t.name,
+		Description: "Test tool: " + t.name,
+		Parameters: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+	}
+}
+
+// Execute 执行工具
+func (t *testTool) Execute(ctx *tools.ToolContext, exec tools.ToolExecutor, args json.RawMessage) (*tools.ToolResult, error) {
+	var params map[string]any
+	if err := json.Unmarshal(args, &params); err != nil {
+		return nil, err
+	}
+
+	result, err := t.handler(ctx.ContextOrBackground(), params)
+	if err != nil {
+		return tools.NewErrorResult(tools.ErrCodeExecutionFailed, "%s", err.Error()), nil
+	}
+
+	return tools.NewTextResult(result), nil
 }

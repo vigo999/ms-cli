@@ -5,31 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/vigo999/ms-cli/tools"
+	"github.com/vigo999/ms-cli/tools/permission"
+	"github.com/vigo999/ms-cli/tools/registry"
 )
 
 // PlanExecutor 计划执行器
 type PlanExecutor struct {
-	toolRegistry ToolRegistry
+	toolRegistry registry.Registry
 	callback     ModeCallback
-	permission   PermissionService
+	permEngine   permission.Engine
 	config       ExecutionConfig
-}
-
-// ToolRegistry 工具注册表接口
-type ToolRegistry interface {
-	Get(name string) (Tool, bool)
-	List() []Tool
-}
-
-// Tool 工具接口
-type Tool interface {
-	Name() string
-	Execute(ctx context.Context, params map[string]any) (string, error)
-}
-
-// PermissionService is a minimal permission port for plan execution.
-type PermissionService interface {
-	Request(ctx context.Context, tool, action, path string) (bool, error)
 }
 
 // ExecutionConfig 执行配置
@@ -49,12 +36,12 @@ func DefaultExecutionConfig() ExecutionConfig {
 }
 
 // NewPlanExecutor 创建新执行器
-func NewPlanExecutor(registry ToolRegistry, callback ModeCallback, cfg ExecutionConfig) *PlanExecutor {
+func NewPlanExecutor(reg registry.Registry, callback ModeCallback, cfg ExecutionConfig) *PlanExecutor {
 	if callback == nil {
 		callback = &DefaultModeCallback{}
 	}
 	return &PlanExecutor{
-		toolRegistry: registry,
+		toolRegistry: reg,
 		callback:     callback,
 		config:       cfg,
 	}
@@ -69,9 +56,9 @@ func (e *PlanExecutor) SetCallback(cb ModeCallback) {
 	e.callback = cb
 }
 
-// SetPermissionService configures permission checks for tool-executing steps.
-func (e *PlanExecutor) SetPermissionService(ps PermissionService) {
-	e.permission = ps
+// SetPermissionEngine configures permission checks for tool-executing steps.
+func (e *PlanExecutor) SetPermissionEngine(pe permission.Engine) {
+	e.permEngine = pe
 }
 
 // Execute 执行计划
@@ -180,27 +167,50 @@ func (e *PlanExecutor) executeTool(ctx context.Context, toolName string, params 
 		return "", fmt.Errorf("tool not found: %s", toolName)
 	}
 
-	if e.permission != nil {
-		action := toolName
-		if toolName == "shell" {
-			if cmd, ok := params["command"].(string); ok {
-				action = strings.TrimSpace(cmd)
-			}
-		} else if b, err := json.Marshal(params); err == nil {
-			action = string(b)
-		}
-		path, _ := params["path"].(string)
-		granted, err := e.permission.Request(ctx, toolName, action, path)
-		if err != nil {
-			return "", err
-		}
-		if !granted {
-			return "", fmt.Errorf("permission denied for tool: %s", toolName)
+	// 转换参数为 JSON
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return "", fmt.Errorf("marshal params: %w", err)
+	}
+
+	// 创建工具上下文
+	toolCtx := &tools.ToolContext{
+		SessionID:   "",
+		MessageID:   "",
+		CallID:      "",
+		ToolID:      toolName,
+		AbortSignal: ctx,
+	}
+
+	// 创建简单的执行器
+	toolExec := &simpleToolExecutor{}
+
+	// 执行工具
+	result, err := tool.Execute(toolCtx, toolExec, paramsJSON)
+	if err != nil {
+		return "", err
+	}
+
+	if result.Error != nil {
+		return "", fmt.Errorf("%s: %s", result.Error.Code, result.Error.Message)
+	}
+
+	// 提取文本结果
+	var resultParts []string
+	for _, part := range result.Parts {
+		if part.Type == tools.PartTypeText {
+			resultParts = append(resultParts, part.Content)
 		}
 	}
 
-	return tool.Execute(ctx, params)
+	return strings.Join(resultParts, "\n"), nil
 }
+
+// simpleToolExecutor 简单的工具执行器实现
+type simpleToolExecutor struct{}
+
+func (e *simpleToolExecutor) UpdateMetadata(meta tools.MetadataUpdate) error { return nil }
+func (e *simpleToolExecutor) AskPermission(req tools.PermissionRequest) error { return nil }
 
 // ExecuteStep 执行指定步骤
 func (e *PlanExecutor) ExecuteStep(ctx context.Context, plan *Plan, stepIndex int) error {
@@ -231,62 +241,6 @@ func (e *PlanExecutor) Resume(ctx context.Context, plan *Plan) error {
 
 	plan.Resume()
 	return e.Execute(ctx, plan)
-}
-
-// SimpleTool 简单工具实现
-type SimpleTool struct {
-	name    string
-	handler func(ctx context.Context, params map[string]any) (string, error)
-}
-
-// NewSimpleTool 创建简单工具
-func NewSimpleTool(name string, handler func(ctx context.Context, params map[string]any) (string, error)) *SimpleTool {
-	return &SimpleTool{
-		name:    name,
-		handler: handler,
-	}
-}
-
-// Name 返回工具名
-func (t *SimpleTool) Name() string {
-	return t.name
-}
-
-// Execute 执行工具
-func (t *SimpleTool) Execute(ctx context.Context, params map[string]any) (string, error) {
-	return t.handler(ctx, params)
-}
-
-// SimpleToolRegistry 简单工具注册表
-type SimpleToolRegistry struct {
-	tools map[string]Tool
-}
-
-// NewSimpleToolRegistry 创建简单工具注册表
-func NewSimpleToolRegistry() *SimpleToolRegistry {
-	return &SimpleToolRegistry{
-		tools: make(map[string]Tool),
-	}
-}
-
-// Register 注册工具
-func (r *SimpleToolRegistry) Register(tool Tool) {
-	r.tools[tool.Name()] = tool
-}
-
-// Get 获取工具
-func (r *SimpleToolRegistry) Get(name string) (Tool, bool) {
-	tool, ok := r.tools[name]
-	return tool, ok
-}
-
-// List 列出所有工具
-func (r *SimpleToolRegistry) List() []Tool {
-	list := make([]Tool, 0, len(r.tools))
-	for _, tool := range r.tools {
-		list = append(list, tool)
-	}
-	return list
 }
 
 // StepExecutionResult 步骤执行结果

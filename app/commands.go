@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/vigo999/ms-cli/internal/project"
-	"github.com/vigo999/ms-cli/permission"
+	permEngine "github.com/vigo999/ms-cli/tools/permission"
 	"github.com/vigo999/ms-cli/ui/model"
 )
 
@@ -320,7 +320,7 @@ Testing connectivity...`, url, modelName, apiKeyStatus)
 
 // cmdPermission handles "/permission [tool] [level]".
 func (a *Application) cmdPermission(args []string) {
-	permSvc, ok := a.permService.(*permission.DefaultPermissionService)
+	engine, ok := a.permEngine.(*permEngine.DefaultEngine)
 	if !ok {
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
@@ -331,28 +331,28 @@ func (a *Application) cmdPermission(args []string) {
 
 	if len(args) == 0 {
 		// Show current permissions
-		policies := permSvc.GetPolicies()
+		ruleset := engine.GetRuleset()
 		msg := "Current Permission Settings:\n\n"
-		if len(policies) == 0 {
+		if len(ruleset.Rules) == 0 {
 			msg += "  No custom permissions set.\n"
 			msg += "  Default: ask for destructive operations (write, edit, shell)\n"
 		} else {
-			for tool, level := range policies {
-				msg += fmt.Sprintf("  %s: %s\n", tool, level)
+			for _, rule := range ruleset.Rules {
+				if rule.Enabled {
+					msg += fmt.Sprintf("  %s: %s\n", rule.Permission, rule.Action)
+				}
 			}
 		}
 		msg += "\nUsage:\n"
 		msg += "  /permission <tool> <level>\n"
 		msg += "\nLevels:\n"
 		msg += "  ask         - Ask each time (default)\n"
-		msg += "  allow_once  - Allow once\n"
-		msg += "  allow_session - Allow for this session\n"
-		msg += "  allow_always - Always allow\n"
+		msg += "  allow       - Always allow\n"
 		msg += "  deny        - Always deny\n"
 		msg += "\nTools: read, write, edit, grep, glob, shell\n"
 		msg += "\nExamples:\n"
 		msg += "  /permission shell ask\n"
-		msg += "  /permission write allow_always"
+		msg += "  /permission write allow"
 		a.EventCh <- model.Event{Type: model.AgentReply, Message: msg}
 		return
 	}
@@ -367,19 +367,39 @@ func (a *Application) cmdPermission(args []string) {
 
 	tool := args[0]
 	levelStr := args[1]
-	level := permission.ParsePermissionLevel(levelStr)
 
-	permSvc.Grant(tool, level)
+	// Convert level string to Action
+	var action permEngine.Action
+	switch strings.ToLower(levelStr) {
+	case "allow", "allow_always":
+		action = permEngine.ActionAllow
+	case "deny":
+		action = permEngine.ActionDeny
+	case "ask":
+		action = permEngine.ActionAsk
+	default:
+		action = permEngine.ActionAsk
+	}
+
+	// Add new rule
+	ruleset := engine.GetRuleset()
+	ruleset.AddRule(permEngine.Rule{
+		ID:         "cmd-" + tool,
+		Permission: tool + ":*",
+		Action:     action,
+		Enabled:    true,
+	})
+	engine.UpdateRuleset(ruleset)
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
-		Message: fmt.Sprintf("Permission for '%s' set to: %s", tool, level),
+		Message: fmt.Sprintf("Permission for '%s' set to: %s", tool, action),
 	}
 }
 
 // cmdYolo handles "/yolo" - toggles auto-approve mode.
 func (a *Application) cmdYolo() {
-	permSvc, ok := a.permService.(*permission.DefaultPermissionService)
+	engine, ok := a.permEngine.(*permEngine.DefaultEngine)
 	if !ok {
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
@@ -388,25 +408,47 @@ func (a *Application) cmdYolo() {
 		return
 	}
 
+	ruleset := engine.GetRuleset()
+
 	// Check current state by looking at shell permission
-	current := permSvc.Check("shell", "")
-	if current == permission.PermissionAllowAlways {
-		// Disable yolo mode
-		permSvc.Grant("shell", permission.PermissionAsk)
-		permSvc.Grant("write", permission.PermissionAsk)
-		permSvc.Grant("edit", permission.PermissionAsk)
+	result := engine.CanExecute("shell:*", "", "")
+	if result.Action == permEngine.ActionAllow {
+		// Disable yolo mode - restore defaults
+		ruleset.AddRule(permEngine.Rule{
+			ID:         "yolo-shell",
+			Permission: "shell:*",
+			Action:     permEngine.ActionAsk,
+			Enabled:    true,
+		})
+		ruleset.AddRule(permEngine.Rule{
+			ID:         "yolo-write",
+			Permission: "write:*",
+			Action:     permEngine.ActionAsk,
+			Enabled:    true,
+		})
+		ruleset.AddRule(permEngine.Rule{
+			ID:         "yolo-edit",
+			Permission: "edit:*",
+			Action:     permEngine.ActionAsk,
+			Enabled:    true,
+		})
+		engine.UpdateRuleset(ruleset)
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
 			Message: "🔒 YOLO mode disabled. Will ask for confirmation on destructive operations.",
 		}
 	} else {
-		// Enable yolo mode
-		permSvc.Grant("shell", permission.PermissionAllowAlways)
-		permSvc.Grant("write", permission.PermissionAllowAlways)
-		permSvc.Grant("edit", permission.PermissionAllowAlways)
-		permSvc.Grant("read", permission.PermissionAllowAlways)
-		permSvc.Grant("grep", permission.PermissionAllowAlways)
-		permSvc.Grant("glob", permission.PermissionAllowAlways)
+		// Enable yolo mode - allow all tools
+		tools := []string{"shell", "write", "edit", "read", "grep", "glob"}
+		for _, tool := range tools {
+			ruleset.AddRule(permEngine.Rule{
+				ID:         "yolo-" + tool,
+				Permission: tool + ":*",
+				Action:     permEngine.ActionAllow,
+				Enabled:    true,
+			})
+		}
+		engine.UpdateRuleset(ruleset)
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
 			Message: "⚡ YOLO mode enabled! All operations will be auto-approved. Use with caution!",

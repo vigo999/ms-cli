@@ -65,6 +65,25 @@ var (
 	diffNeutralStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("250")).
 				PaddingLeft(2)
+
+	// Permission request styles
+	permissionBorderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("214"))
+
+	permissionHeaderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("214")).
+				Bold(true)
+
+	permissionOptionStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("250"))
+
+	permissionSelectedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("255")).
+				Bold(true).
+				Background(lipgloss.Color("33"))
+
+	permissionInfoStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244"))
 )
 
 // RenderMessages converts messages into styled text for the viewport.
@@ -75,7 +94,7 @@ func RenderMessages(state model.State, spinnerView string) string {
 	stats := state.Stats
 	isThinking := state.IsThinking
 
-	for _, m := range messages {
+	for i, m := range messages {
 		switch m.Kind {
 		case model.MsgUser:
 			parts = append(parts, renderUserMsg(m.Content))
@@ -91,6 +110,8 @@ func RenderMessages(state model.State, spinnerView string) string {
 			}
 		case model.MsgTool:
 			parts = append(parts, renderTool(m))
+		case model.MsgPermissionRequest:
+			parts = append(parts, renderPermissionRequest(m, i, state.PendingPermission))
 		}
 	}
 
@@ -241,4 +262,51 @@ func renderErrorTool(m model.Message) string {
 	body := strings.Join(styled, "\n")
 
 	return header + "\n" + body
+}
+
+// --- Permission Request: embedded in chat stream ---
+func renderPermissionRequest(m model.Message, index int, pending *model.PendingPermission) string {
+	// Header
+	header := fmt.Sprintf("  %s %s %s",
+		permissionBorderStyle.Render("⚠️"),
+		permissionHeaderStyle.Render("Permission Request"),
+		permissionBorderStyle.Render(strings.Repeat("─", 40)),
+	)
+
+	// Tool info
+	var info string
+	if m.ToolName != "" {
+		info = permissionInfoStyle.Render("Tool: " + m.ToolName)
+	}
+	if m.Content != "" {
+		if info != "" {
+			info += "\n  "
+		}
+		info += permissionInfoStyle.Render("Path: " + m.Content)
+	}
+
+	// Options list
+	var options []string
+	isActive := pending != nil && pending.MessageIndex == index
+
+	for i, opt := range m.PermissionOptions {
+		var line string
+		if isActive && i == m.SelectedIndex {
+			// Selected option with cursor
+			line = permissionSelectedStyle.Render("> " + opt.Label)
+		} else {
+			// Unselected option
+			line = "  " + permissionOptionStyle.Render(opt.Label)
+		}
+		options = append(options, line)
+	}
+
+	// Combine all parts
+	result := header
+	if info != "" {
+		result += "\n  " + info
+	}
+	result += "\n" + strings.Join(options, "\n")
+
+	return result
 }

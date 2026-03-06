@@ -7,8 +7,8 @@ import (
 	"github.com/vigo999/ms-cli/agent/context"
 	"github.com/vigo999/ms-cli/agent/loop"
 	"github.com/vigo999/ms-cli/configs"
-	"github.com/vigo999/ms-cli/permission"
-	"github.com/vigo999/ms-cli/tools"
+	permEngine "github.com/vigo999/ms-cli/tools/permission"
+	"github.com/vigo999/ms-cli/tools/registry"
 	"github.com/vigo999/ms-cli/trace"
 	"github.com/vigo999/ms-cli/ui/model"
 )
@@ -23,9 +23,9 @@ type Application struct {
 	WorkDir      string
 	RepoURL      string
 	Config       *configs.Config
-	toolRegistry *tools.Registry
+	toolRegistry registry.Registry
 	ctxManager   *context.Manager
-	permService  permission.PermissionService
+	permEngine   permEngine.Engine
 	stateManager *configs.StateManager
 	traceWriter  trace.Writer
 }
@@ -60,8 +60,8 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 	}
 	newEngine := loop.NewEngine(engineCfg, provider, a.toolRegistry)
 	newEngine.SetContextManager(a.ctxManager)
-	newEngine.SetPermissionService(a.permService)
 	newEngine.SetTraceWriter(a.traceWriter)
+	newEngine.SetPermissionEngine(a.permEngine)
 
 	// Replace the engine
 	a.Engine = newEngine

@@ -7,7 +7,7 @@ import (
 
 	ctxmanager "github.com/vigo999/ms-cli/agent/context"
 	"github.com/vigo999/ms-cli/integrations/llm"
-	"github.com/vigo999/ms-cli/tools"
+	"github.com/vigo999/ms-cli/tools/registry"
 )
 
 type captureProvider struct {
@@ -46,7 +46,7 @@ func newEngineForContextTests(provider llm.Provider) *Engine {
 	return NewEngine(EngineConfig{
 		MaxIterations: 1,
 		MaxTokens:     8000,
-	}, provider, tools.NewRegistry())
+	}, provider, registry.NewRegistry())
 }
 
 func TestSetContextManagerPreservesSystemPrompt(t *testing.T) {

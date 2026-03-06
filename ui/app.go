@@ -114,6 +114,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Check if there's a pending permission request
+	if a.state.PendingPermission != nil {
+		return a.handlePermissionSelection(msg)
+	}
+
 	// Check if we're in slash suggestion mode
 	if a.input.IsSlashMode() {
 		switch msg.String() {
@@ -193,10 +198,105 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (a App) handlePermissionSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	pending := a.state.PendingPermission
+	if pending == nil {
+		return a, nil
+	}
+
+	// Get the permission request message
+	msgIndex := pending.MessageIndex
+	if msgIndex >= len(a.state.Messages) {
+		return a, nil
+	}
+
+	// Make a copy of messages to modify
+	msgs := make([]model.Message, len(a.state.Messages))
+	copy(msgs, a.state.Messages)
+	permMsg := &msgs[msgIndex]
+
+	switch msg.String() {
+	case "up":
+		// Move selection up (with wrap)
+		if permMsg.SelectedIndex > 0 {
+			permMsg.SelectedIndex--
+		} else {
+			permMsg.SelectedIndex = len(permMsg.PermissionOptions) - 1
+		}
+		a.state.Messages = msgs
+		a.updateViewport()
+		return a, nil
+
+	case "down":
+		// Move selection down (with wrap)
+		if permMsg.SelectedIndex < len(permMsg.PermissionOptions)-1 {
+			permMsg.SelectedIndex++
+		} else {
+			permMsg.SelectedIndex = 0
+		}
+		a.state.Messages = msgs
+		a.updateViewport()
+		return a, nil
+
+	case "enter":
+		// Confirm selection
+		selected := permMsg.PermissionOptions[permMsg.SelectedIndex]
+
+		// Send response
+		if pending.RespCh != nil {
+			switch selected.Key {
+			case "allow":
+				pending.RespCh <- model.PermissionResponse{Granted: true, Remember: false}
+			case "remember":
+				pending.RespCh <- model.PermissionResponse{Granted: true, Remember: true}
+			case "deny":
+				pending.RespCh <- model.PermissionResponse{Granted: false, Remember: false}
+			}
+		}
+
+		// Add confirmation message
+		a.state = a.state.WithMessage(model.Message{
+			Kind:    model.MsgAgent,
+			Content: "Permission " + strings.ToLower(selected.Label),
+		})
+
+		// Clear pending permission
+		a.state.PendingPermission = nil
+		a.updateViewport()
+		return a, nil
+
+	default:
+		// Ignore other keys
+		return a, nil
+	}
+}
+
 func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	var eventCmd tea.Cmd
 
 	switch ev.Type {
+	case model.PermissionRequest:
+		// Create permission request message
+		msg := model.Message{
+			Kind:     model.MsgPermissionRequest,
+			Content:  ev.PermissionPath,
+			ToolName: ev.PermissionTool,
+			SelectedIndex: 0,
+			PermissionOptions: []model.PermissionOption{
+				{Key: "allow", Label: "Allow once"},
+				{Key: "remember", Label: "Allow for session"},
+				{Key: "deny", Label: "Deny"},
+			},
+		}
+		msgIndex := len(a.state.Messages)
+		a.state = a.state.WithMessage(msg)
+		a.state.PendingPermission = &model.PendingPermission{
+			MessageIndex: msgIndex,
+			RespCh:       ev.PermissionRespCh,
+		}
+		a.updateViewport()
+		return a, a.waitForEvent
+
 	case model.AgentThinking:
 		// Start thinking - set flag and ensure we have a thinking message
 		a.state = a.state.WithThinking(true)
@@ -402,7 +502,12 @@ func (a App) View() string {
 	line := a.chatLine()
 	chat := a.viewport.View()
 	input := "  " + a.input.View()
+
+	// Show different hint when there's a pending permission request
 	hintBar := panels.RenderHintBar(a.width)
+	if a.state.PendingPermission != nil {
+		hintBar = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("  ↑/↓ select • Enter confirm")
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		topBar,

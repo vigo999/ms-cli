@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/vigo999/ms-cli/test/mocks"
-	"github.com/vigo999/ms-cli/tools"
+	"github.com/vigo999/ms-cli/tools/registry"
 )
 
 type traceRecord struct {
@@ -63,11 +63,11 @@ func TestEngineRunWritesTrajectory(t *testing.T) {
 	provider := mocks.NewMockProvider()
 	provider.AddResponse("done")
 
-	registry := tools.NewRegistry()
+	reg := registry.NewRegistry()
 	engine := NewEngine(EngineConfig{
 		MaxIterations: 3,
 		MaxTokens:     8000,
-	}, provider, registry)
+	}, provider, reg)
 
 	traceWriter := &captureTraceWriter{}
 	engine.SetTraceWriter(traceWriter)
