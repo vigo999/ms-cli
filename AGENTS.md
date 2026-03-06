@@ -1,18 +1,24 @@
-# AGENTS 协作约束
+# AGENTS Collaboration Constraints
 
-本文件定义本仓库的工程协作硬约束。凡在本仓库执行任务（包括代码、文档、测试、重构）均需遵守以下规则。
+This file defines hard engineering collaboration constraints for this repository. Any task executed in this repo (including code, documentation, tests, and refactoring) must follow the rules below.
 
-## 强制规则
+## Mandatory Rules
 
-1. 开工前必须先阅读 `docs/ARCHITECTURE.md`。
-2. 每次任务的第一条工作说明必须显式确认“已对照当前 architecture”。
-3. 若需求与 architecture 冲突，必须先指出冲突点与受影响模块，再执行实现。
-4. 若实现导致架构变化，必须在同次提交里同步更新 `docs/ARCHITECTURE.md`。
-5. 若仅做局部修复且不影响架构，需在说明中明确标注“无架构变更”。
-6. 禁止在未阅读 architecture 的情况下直接修改 `agent/`、`app/`、`tools/` 核心流程文件。
+1. Before starting work, you must read `docs/ARCHITECTURE.md`.
+2. The first work note for each task must explicitly confirm "已对照当前 architecture" (aligned with the current architecture).
+3. If a requirement conflicts with the architecture, you must first point out the conflict and impacted modules, then proceed with implementation.
+4. If implementation causes architecture changes, you must update `docs/ARCHITECTURE.md` in the same commit.
+5. If the change is only a local fix and does not affect architecture, explicitly mark "无架构变更" (no architecture change).
+6. Do not directly modify core workflow files under `agent/`, `app/`, or `tools/` before reading the architecture.
 
-## 开工检查清单（Checklist）
+## Startup Checklist
 
-1. [ ] 已阅读 `docs/ARCHITECTURE.md`
-2. [ ] 已定位改动模块在架构中的位置与上下游关系
-3. [ ] 已判断本次改动是否需要同步更新 `docs/ARCHITECTURE.md`
+1. [ ] Read `docs/ARCHITECTURE.md`
+2. [ ] Located the target module in the architecture and identified upstream/downstream dependencies
+3. [ ] Determined whether this change requires updating `docs/ARCHITECTURE.md`
+
+## Pre-finish Checklist
+
+1. [ ] Ensure there is no redundant code
+2. [ ] Summarize change details under `docs/updates/`
+3. [ ] Update `docs/ARCHITECTURE.md` if necessary

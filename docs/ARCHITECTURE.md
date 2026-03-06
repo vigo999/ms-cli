@@ -1,170 +1,191 @@
 # ms-cli Architecture
 
-## 1. 目标与边界
+## 1. Goals and Scope
 
-本文档仅描述 `ms-cli` 当前代码中的真实架构实现与运行链路，不承载版本规划或 roadmap 目标。
+This document describes only the real architecture implementation and runtime flow in the current `ms-cli` codebase. It does not contain version planning or roadmap goals.
 
-边界约束如下：
+Scope constraints:
 
-1. 只覆盖仓库当前主线代码行为（`app/`、`agent/`、`tools/` 等）。
-2. 不定义未来版本承诺；演进路线由 roadmap 文档维护。
-3. 任何架构结论以代码为准，本文档用于帮助实现者快速定位模块关系与扩展入口。
+1. Only covers behavior in the current mainline code (`app/`, `agent/`, `tools/`, etc.).
+2. Does not define future-version commitments; evolution plans are maintained in roadmap documents.
+3. All architecture conclusions are code-first. This document helps implementers quickly locate module relationships and extension points.
 
-## 2. 系统分层与模块职责
+## 2. Layering and Module Responsibilities
 
-`ms-cli` 当前可按以下分层理解：
+`ms-cli` can currently be understood with the following layers:
 
-1. `app`：CLI/TUI 入口与运行时装配层。负责解析命令（`run/resume/sessions list`）、初始化依赖、桥接 UI 与 Agent。
-2. `agent`：核心智能执行层。
-3. `tools`：可执行工具层（读写文件、搜索、shell），由 Agent 通过统一 schema 调用。
-4. `integrations`：外部模型接入层（OpenAI/Anthropic 协议）。
-5. `permission`：工具调用授权层（工具级、命令级、路径级策略）。
-6. `ui`：Bubble Tea 终端界面层，消费 `loop.Event` 映射后的 UI 事件。
-7. `configs`：配置加载与优先级合并（配置文件、环境变量、命令行）。
+1. `app`: CLI/TUI entry and runtime assembly. Parses commands (`run/resume/sessions list`), initializes dependencies, and bridges UI and Agent.
+2. `agent`: Core intelligent execution layer.
+3. `tools`: Executable tool layer (read/write files, search, shell), called by Agent through a unified schema.
+4. `integrations`: External model integration layer (OpenAI/Anthropic protocols).
+5. `permission`: Tool-call authorization layer (tool-level, command-level, path-level policies).
+6. `ui`: Bubble Tea terminal UI layer, consumes UI events mapped from `loop.Event`.
+7. `configs`: Configuration loading and precedence merge layer (config file, environment variables, CLI args).
 
-补充说明：
+Additional notes:
 
-1. `executor` 目录仅保留兼容用途，真实执行由 `agent/loop.Engine` 完成。
-2. 当前运行链路中，`session` 已接入；`memory` 仍未接入主执行路径。
+1. The `executor` directory is kept only for compatibility; real execution is handled by `agent/loop.Engine`.
+2. `session` is integrated into the runtime path; `memory` is still not integrated into the main execution path.
+3. TUI adds a manual subagent command `/subagent`, triggered in `app/commands.go` and calling `loop.Engine.RunSubagent(...)`.
 
-## 3. 运行时装配（Bootstrap）
+## 3. Runtime Bootstrap
 
-入口文件：
+Entry files:
 
 1. `app/main.go`
 2. `app/cli.go`
 3. `app/bootstrap.go`
 4. `app/wire.go`
 
-### Demo 路径（`--demo`）
+### Demo Path (`--demo`)
 
-1. 在 `app/bootstrap.go` 初始化配置与 `session.Manager`。
-2. 创建 `loop.Engine`（stub provider）。
-3. 注入到 `Application`，由 `app/run.go` 的 `runDemo()` 驱动虚拟事件流。
+1. Initialize config and `session.Manager` in `app/bootstrap.go`.
+2. Create `loop.Engine` (stub provider).
+3. Inject into `Application`, then `runDemo()` in `app/run.go` drives a simulated event stream.
 
-### Real 路径（默认）
+### Real Path (default)
 
-`app/bootstrap.go` 负责关键依赖注入：
+`app/bootstrap.go` handles key dependency injection:
 
-1. Provider：`initProvider` 根据协议创建 OpenAI/Anthropic 客户端。
-2. Tool Registry：`initTools` 注册 `read/write/edit/grep/glob/shell`。
-3. Context Manager：创建 `context.Manager` 管理短期上下文。
-4. Session Manager：创建 `session.Manager` 管理会话持久化。
-5. Permission Service：`permission.NewDefaultPermissionService`。
-6. Trajectory Writer：`session.NewSessionTraceWriter`，按 session 固定路径写 JSONL。
-7. Engine：`loop.NewEngine` 创建核心执行器。
+1. Provider: `initProvider` creates OpenAI/Anthropic clients by protocol.
+2. Tool registry: `initTools` registers `read/write/edit/grep/glob/shell`.
+3. Context manager: creates `context.Manager` for short-term context.
+4. Session manager: creates `session.Manager` for persistent sessions.
+5. Permission service: `permission.NewDefaultPermissionService`.
+6. Trajectory writer: `session.NewSessionTraceWriter`, writes JSONL to a fixed per-session path.
+7. Engine: `loop.NewEngine` creates the core executor.
 
-随后在 `app/wire.go` 的 `attachEngineHooks` 统一注入：
+Then `attachEngineHooks` in `app/wire.go` injects:
 
 1. `Engine.SetContextManager(...)`
 2. `Engine.SetPermissionService(...)`
 3. `Engine.SetTraceWriter(...)`
-4. `Engine.SetMessageSink(...)`（把会话消息实时写入 `session.Manager`）
+4. `Engine.SetMessageSink(...)` (persist session messages to `session.Manager` in real time)
 
-## 4. 核心执行时序（Run）
+## 4. Core Execution Sequence (Run)
 
-核心步骤流（Real 模式）：
+Core step flow (Real mode):
 
-1. 用户在 TUI 输入任务（`app/run.go`）。
-2. `Application.runTask` 调用 `Engine.Run(task)`。
-3. `loop.Engine` 将用户消息写入 `context.Manager`（短期上下文）。
-4. `context.Manager.GetMessages()` 提供当前消息窗口给 provider。
-5. Provider 生成回复：
-6. 若包含 tool call，`loop.Engine` 先通过 `permission.PermissionService` 授权。
-7. 授权通过后调用 `tools.Registry` 中对应工具执行，结果回灌到 `context.Manager`。
-8. 每轮关键事件写入会话轨迹（`run_started`、`llm_request`、`tool_result`、`run_finished` 等）。
-9. 同时通过 `MessageSink` 把 user/assistant/tool 消息持久化进当前 session。
-10. `loop.Event` 回传 `app/run.go`，映射为 UI 事件并展示。
+1. User enters a task in TUI (`app/run.go`).
+2. `Application.runTask` calls `Engine.Run(task)`.
+3. `loop.Engine` writes user messages into `context.Manager` (short-term context).
+4. `context.Manager.GetMessages()` provides the current message window to provider.
+5. Provider generates a response.
+6. If response includes tool calls, `loop.Engine` first requests authorization via `permission.PermissionService`.
+7. After approval, the corresponding tool is executed in `tools.Registry`, and results are fed back into `context.Manager`.
+8. Key events per round are written to session trajectory (`run_started`, `llm_request`, `tool_result`, `run_finished`, etc.).
+9. At the same time, `MessageSink` persists user/assistant/tool messages to the current session.
+10. `loop.Event` is returned to `app/run.go`, mapped to UI events, and rendered.
 
-简化链路可表示为：
+Simplified flow:
 
-`用户输入 -> loop.Engine -> context -> provider -> tools -> permission -> session(trajectory) -> UI`
+`user input -> loop.Engine -> context -> provider -> tools -> permission -> session (trajectory) -> UI`
 
-## 5. 会话恢复时序（Resume）
+### 4.1 Manual Subagent Delegation Sequence (`/subagent`)
 
-命令入口：`ms-cli resume <session-id>`
+Command entry: `/subagent [--allow-write] [--allow-shell] <task>`
 
-恢复流程：
+Execution flow:
 
-1. `app/cli.go` 解析 `resume` 并写入 `BootstrapConfig.ResumeSessionID`。
-2. `app/bootstrap.go` 通过 `sessionManager.Load(id)` 加载会话 JSON。
-3. 应用 runtime 快照：
-4. `applyModelSnapshot(...)` 恢复协议、模型、URL 等模型配置。
-5. `applyPermissionSnapshot(...)` 恢复工具/命令/路径权限策略。
-6. `ctxManager.ReplaceMessages(currentSession.Messages)` 恢复上下文消息。
-7. `sessionMessagesToUI(...)` 把历史消息转换为 UI 初始消息。
-8. `session.NewSessionTraceWriter(sessionStorePath, currentSession.ID)` 复用同一会话轨迹文件。
-9. `sessionManager.SetCurrentTracePath(...)` 与 `syncSessionRuntime()` 回写当前 runtime 状态。
-10. 进入 `runReal()` 后，后续消息继续走同一套 context/session 持久化链路（含 trajectory）。
+1. `app/commands.go` parses args and applies a single-flight limit (only one subagent at a time).
+2. Calls `loop.Engine.RunSubagent(req)` to create an isolated child executor (independent context, does not reuse the main session message window).
+3. The child executor reuses the current provider and permission service.
+4. Child executor filters tools by allowlist.
+5. Default tools: `read/grep/glob`.
+6. `--allow-write` additionally enables `write/edit`.
+7. `--allow-shell` additionally enables `shell`.
+8. `subagent` is always excluded (prevents recursion).
+9. Child run traces are written to current session trajectory via `subagent_*` events (including `run_id`).
+10. When execution finishes, the main session writes summary message `[subagent:<run_id>] <summary>` into both `context.Manager` and `session.Manager`.
 
-## 6. Agent 子系统内部分工
+## 5. Session Resume Sequence (Resume)
 
-`agent` 目前包含 `loop/context/plan/session/memory` 五个子系统：
+Command entry: `ms-cli resume <session-id>`
 
-1. `agent/loop`：主执行引擎。负责 ReAct 循环、tool 调用、计划模式、事件发射与轨迹写入调用。
-2. `agent/context`：短期上下文。负责消息保存、token 估算、预算与压缩策略。
-3. `agent/plan`：计划生成与执行。包括 `Planner`（生成）与 `PlanExecutor`（执行）。
-4. `agent/session`：会话持久化与恢复。负责 session JSON、runtime 快照、会话轨迹写盘。
-5. `agent/memory`：长期记忆模块（策略、检索、SQLite 存储）。当前未接入主执行链路。
+Resume flow:
 
-关键关系：
+1. `app/cli.go` parses `resume` and writes `BootstrapConfig.ResumeSessionID`.
+2. `app/bootstrap.go` loads session JSON via `sessionManager.Load(id)`.
+3. Apply runtime snapshot.
+4. `applyModelSnapshot(...)` restores protocol, model, URL, and related model config.
+5. `applyPermissionSnapshot(...)` restores tool/command/path permission policies.
+6. `ctxManager.ReplaceMessages(currentSession.Messages)` restores context messages.
+7. `sessionMessagesToUI(...)` converts history messages into initial UI messages.
+8. `session.NewSessionTraceWriter(sessionStorePath, currentSession.ID)` reuses the same session trajectory file.
+9. `sessionManager.SetCurrentTracePath(...)` and `syncSessionRuntime()` write back current runtime state.
+10. After entering `runReal()`, subsequent messages continue through the same context/session persistence path (including trajectory).
 
-1. `loop -> context`：每轮请求都依赖 context。
-2. `loop -> plan`：Plan/Review 模式下调度计划子系统。
-3. `app -> session`：通过 message sink 与 resume 机制接入会话层。
-4. `memory` 目前与运行时链路解耦，仅在测试中使用。
+## 6. Agent Subsystem Responsibilities
 
-## 7. 状态与持久化
+`agent` currently has five subsystems: `loop/context/plan/session/memory`.
 
-当前状态分层：
+1. `agent/loop`: Main execution engine. Handles ReAct loop, tool calls, plan mode, manual subagent execution, event emission, and trajectory writes.
+2. `agent/context`: Short-term context. Handles message storage, token estimation, budget, and compaction policies.
+3. `agent/plan`: Plan generation and execution, including `Planner` (generation) and `PlanExecutor` (execution).
+4. `agent/session`: Session persistence and resume. Handles session JSON, runtime snapshots, and session trajectory writes.
+5. `agent/memory`: Long-term memory module (policy, retrieval, SQLite storage). Not integrated into the main runtime path yet.
 
-1. 短期态（对话窗口）：`context.Manager` 内存中维护消息、预算、压缩统计。
-2. 会话长期态：`session.Manager` 持久化完整消息与 runtime 快照。
-3. 会话轨迹态：由 `session.EventWriter` 按 session 输出 JSONL 轨迹，记录运行事件。
+Key relationships:
 
-落盘形式：
+1. `loop -> context`: every round depends on context.
+2. `loop -> plan`: schedules plan subsystem in Plan/Review mode.
+3. `app -> session`: integrates session layer through message sink and resume mechanism.
+4. `memory` is currently decoupled from runtime path and used only in tests.
 
-1. Session JSON：`.mscli/sessions/<session-id>.json`
-2. Trace JSONL：`.mscli/sessions/<session-id>.trajectory.jsonl`
+## 7. State and Persistence
 
-边界原则：
+Current state layers:
 
-1. `context` 优先服务当前推理窗口与 token 预算控制。
-2. `session` 提供跨进程、跨重启恢复能力。
-3. trajectory 面向可观测性，不直接作为推理上下文来源。
+1. Short-term state (dialog window): `context.Manager` maintains messages, budget, and compaction stats in memory.
+2. Long-term session state: `session.Manager` persists full messages and runtime snapshots.
+3. Session trajectory state: `session.EventWriter` outputs per-session JSONL traces of runtime events.
 
-## 8. 扩展点与演进接口
+On-disk format:
 
-新增/扩展能力的主要入口如下：
+1. Session JSON: `.mscli/sessions/<session-id>.json`
+2. Trace JSONL: `.mscli/sessions/<session-id>.trajectory.jsonl`
 
-1. 新增 Provider：
-2. 在 `integrations/llm/<provider>/` 实现 `llm.Provider`。
-3. 在 `app/bootstrap.go:initProvider` 增加协议分支与配置映射。
-4. 新增 Tool：
-5. 实现 `tools.Tool` 接口（`tools/types.go`）。
-6. 在 `app/bootstrap.go:initTools` 注册到 `tools.Registry`。
-7. 新增 Run Mode：
-8. 在 `agent/plan/mode.go` 扩展 `RunMode`，并在 `agent/loop/engine.go` 增加分支执行逻辑。
-9. 新增 Permission 策略：
-10. 扩展 `permission.DefaultPermissionService` 的策略检查与快照同步逻辑。
-11. 接入 Memory（未来）：
-12. 可在 `app/wire.go` 或 `loop.Engine` 的消息生命周期中接入 `memory.Manager`（保存/检索策略需明确）。
+Boundary principles:
 
-## 9. 当前限制与已知风险
+1. `context` primarily serves current reasoning window and token budget control.
+2. `session` provides cross-process and cross-restart recovery.
+3. Trajectory is for observability and is not a direct reasoning-context source.
+4. Detailed `/subagent` process is kept in trajectory (`subagent_run_started/subagent_event/subagent_run_finished`), while main session keeps only summary messages.
 
-以下风险来自当前代码与 `docs/agent-review.md` 的归纳：
+## 8. Extension Points and Evolution Interfaces
 
-1. `context.Manager.shouldCompactLocked` 的预算分支阈值比较存在逻辑问题，可能导致自动压缩触发不稳定。
-2. `plan.GeneratePlanPrompt(goal, tools)` 中 `tools` 参数未真正用于 prompt 生成，工具列表仍硬编码。
-3. `plan.ExecutionConfig` 的 `MaxRetries`、`TimeoutPerStep` 未完全落到执行路径。
-4. `memory.Query.Metadata` 在 `SQLiteStore.Query` 未实现对应过滤。
-5. `memory.Retriever` 中 policy 字段落地较弱，检索策略主要仍依赖启发式打分。
-6. `/compact` 命令在 `app/commands.go` 仍是提示性实现，未直接调用 `context.Manager.Compact()`。
+Primary entry points for new/extended capabilities:
 
-## 10. 相关文档索引
+1. Add a provider.
+2. Implement `llm.Provider` under `integrations/llm/<provider>/`.
+3. Add protocol branch and config mapping in `app/bootstrap.go:initProvider`.
+4. Add a tool.
+5. Implement `tools.Tool` interface (`tools/types.go`).
+6. Register it in `app/bootstrap.go:initTools` into `tools.Registry`.
+7. Add a run mode.
+8. Extend `RunMode` in `agent/plan/mode.go`, and add branch logic in `agent/loop/engine.go`.
+9. Add a permission policy.
+10. Extend policy checks and snapshot sync logic in `permission.DefaultPermissionService`.
+11. Integrate memory (future).
+12. `memory.Manager` can be integrated in `app/wire.go` or `loop.Engine` message lifecycle (save/retrieval policies must be explicitly defined).
+13. Extend subagent.
+14. Add concurrency scheduling, independent model config, or finer-grained tool policy on `agent/loop.Engine.RunSubagent`.
 
-1. 项目总览：[`README.md`](../README.md)
-2. agent 代码评审：[`docs/agent-review.md`](./agent-review.md)
-3. roadmap 文档：[`docs/roadmap/ROADMAP.md`](./roadmap/ROADMAP.md)
+## 9. Current Limitations and Known Risks
 
-说明：演进路线与阶段目标在 roadmap 文档中维护，本文仅维护“当前实现架构事实”。
+The following risks are summarized from current code and `docs/agent-review.md`:
+
+1. The budget-threshold branch comparison in `context.Manager.shouldCompactLocked` has logic issues and may cause unstable auto-compaction triggers.
+2. In `plan.GeneratePlanPrompt(goal, tools)`, the `tools` argument is not actually used for prompt construction; tool list remains hardcoded.
+3. `MaxRetries` and `TimeoutPerStep` in `plan.ExecutionConfig` are not fully enforced in the execution path.
+4. `memory.Query.Metadata` filtering is not implemented in `SQLiteStore.Query`.
+5. In `memory.Retriever`, policy fields are weakly applied; retrieval strategy still mainly relies on heuristic scoring.
+6. The `/compact` command in `app/commands.go` is still a placeholder and does not directly call `context.Manager.Compact()`.
+
+## 10. Related Document Index
+
+1. Project overview: [`README.md`](../README.md)
+2. Agent code review: [`docs/agent-review.md`](./agent-review.md)
+3. Roadmap docs: [`docs/roadmap/ROADMAP.md`](./roadmap/ROADMAP.md)
+
+Note: evolution plans and phased goals are maintained in roadmap documents. This file only maintains architecture facts of the current implementation.
